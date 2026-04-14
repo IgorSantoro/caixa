@@ -1,0 +1,258 @@
+import streamlit as st
+import pandas as pd
+import os
+from io import BytesIO
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import inch
+
+st.set_page_config(layout="wide")
+
+# =============================
+# ESTILO GLOBAL (TEMA CLARO)
+# =============================
+st.markdown("""
+<style>
+
+/* ===== BASE ===== */
+html, body, [class*="css"] {
+    background-color: #FFFFFF !important;
+    color: #000000 !important;
+    font-family: Arial, sans-serif !important;
+    font-size: 13px !important;
+}
+
+/* ===== KPI ===== */
+[data-testid="stMetric"] {
+    background-color: #FFFFFF;
+    border: 1px solid #D1D5DB;
+    padding: 12px;
+    border-radius: 8px;
+}
+
+/* Texto KPI */
+[data-testid="stMetricLabel"] {
+    color: #6B7280;
+}
+
+[data-testid="stMetricValue"] {
+    color: #000000;
+    font-weight: bold;
+}
+
+/* ===== CARDS ===== */
+.card {
+    background-color: #FFFFFF;
+    padding: 16px;
+    border-radius: 10px;
+    border: 1px solid #E5E7EB;
+    margin-bottom: 12px;
+}
+
+/* ===== BOTÕES ===== */
+button {
+    background-color: #F3F4F6 !important;
+    color: #000 !important;
+    border: 1px solid #D1D5DB !important;
+}
+
+/* ===== TABELA ===== */
+th {
+    background-color: #F9FAFB !important;
+    color: #000000;
+    border: 1px solid #E5E7EB;
+}
+
+td {
+    background-color: #FFFFFF;
+    color: #000000;
+    border: 1px solid #E5E7EB;
+}
+
+/* ===== SIDEBAR ===== */
+section[data-testid="stSidebar"] {
+    background-color: #F9FAFB !important;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+# =============================
+# FUNÇÃO TABELA
+# =============================
+def render_table(df):
+    html = "<table style='width:100%; border-collapse:collapse;'>"
+    
+    html += "<tr>"
+    for col in df.columns:
+        html += f"<th style='padding:6px;'>{col}</th>"
+    html += "</tr>"
+    
+    for _, row in df.iterrows():
+        html += "<tr>"
+        for val in row:
+            html += f"<td style='padding:6px;'>{val}</td>"
+        html += "</tr>"
+    
+    html += "</table>"
+    st.markdown(html, unsafe_allow_html=True)
+
+# =============================
+# ESTADO
+# =============================
+if "empresa" not in st.session_state:
+    st.session_state.empresa = None
+
+# =============================
+# FORMATAÇÃO
+# =============================
+def formato_br(valor):
+    return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+# =============================
+# CARREGAR BASE
+# =============================
+@st.cache_data
+def carregar_dados():
+    caminho = r"C:\\Users\\iss55\\igor\\Fluxo de Caixa"
+    arquivo = os.path.join(caminho, "base.xls")
+
+    if not os.path.exists(arquivo):
+        st.error("Arquivo não encontrado")
+        st.stop()
+
+    return pd.read_excel(arquivo)
+
+df = carregar_dados()
+
+# =============================
+# TRATAMENTO
+# =============================
+colunas = [
+    "cod_pagamento","dat_pagamento","cf_empresa",
+    "vlr_principal","vlr_multa",
+    "vlr_juro_encargo","vlr_outra_entidade","vlr_total"
+]
+
+for col in colunas:
+    if col not in df.columns:
+        df[col] = 0
+
+df["cod_pagamento"] = df["cod_pagamento"].astype(str).str.strip()
+df = df[df["cod_pagamento"].isin(["2362","2484","2089","2372"])]
+
+valores = colunas[3:]
+
+for col in valores:
+    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+df["dat_pagamento"] = pd.to_datetime(df["dat_pagamento"], dayfirst=True, errors="coerce")
+df = df.dropna(subset=["dat_pagamento"])
+
+df["Ano"] = df["dat_pagamento"].dt.year
+df["Trimestre"] = df["dat_pagamento"].dt.quarter
+
+df["Imposto"] = df["cod_pagamento"].map({
+    "2362":"IRPJ","2089":"IRPJ",
+    "2484":"CSLL","2372":"CSLL"
+})
+
+if df.empty:
+    st.error("Sem dados após tratamento")
+    st.stop()
+
+# =============================
+# FILTROS
+# =============================
+st.sidebar.header("Filtros")
+ano = st.sidebar.selectbox("Ano", sorted(df["Ano"].unique()))
+tri = st.sidebar.selectbox("Trimestre", [1,2,3,4])
+
+df_tri = df[(df["Ano"]==ano) & (df["Trimestre"]==tri)]
+
+# =============================
+# ABAS
+# =============================
+abas = st.tabs(["📊 Dashboard", "📑 Analítico", "📈 Consolidados"])
+
+# =============================
+# DASHBOARD
+# =============================
+with abas[0]:
+    st.markdown("<h2 style='color:#111827;'>📊 Visão Corporativa</h2>", unsafe_allow_html=True)
+
+    empresas = (
+        df_tri.groupby("cf_empresa")["vlr_total"]
+        .sum()
+        .sort_values(ascending=False)
+        .index
+    )
+
+    for emp in empresas:
+        df_emp = df_tri[df_tri["cf_empresa"]==emp]
+
+        total = df_emp["vlr_total"].sum()
+        irpj = df_emp[df_emp["Imposto"]=="IRPJ"]["vlr_total"].sum()
+        csll = df_emp[df_emp["Imposto"]=="CSLL"]["vlr_total"].sum()
+
+        st.markdown(f"""
+        <div class="card">
+            <b>{emp}</b><br><br>
+            Total: <b>R$ {formato_br(total)}</b><br>
+            IRPJ: R$ {formato_br(irpj)}<br>
+            CSLL: R$ {formato_br(csll)}
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.button(f"Selecionar {emp}"):
+            st.session_state.empresa = emp
+
+# =============================
+# ANALÍTICO
+# =============================
+with abas[1]:
+    emp = st.session_state.empresa
+
+    if not emp:
+        st.info("Selecione uma empresa no Dashboard")
+    else:
+        df_emp = df_tri[df_tri["cf_empresa"]==emp]
+
+        st.markdown(f"## {emp}")
+
+        c1,c2,c3,c4,c5 = st.columns(5)
+        c1.metric("Principal", f"R$ {formato_br(df_emp['vlr_principal'].sum())}")
+        c2.metric("Multa", f"R$ {formato_br(df_emp['vlr_multa'].sum())}")
+        c3.metric("Juros", f"R$ {formato_br(df_emp['vlr_juro_encargo'].sum())}")
+        c4.metric("Outros", f"R$ {formato_br(df_emp['vlr_outra_entidade'].sum())}")
+        c5.metric("Total", f"R$ {formato_br(df_emp['vlr_total'].sum())}")
+
+        st.markdown("### Detalhamento")
+        render_table(df_emp[valores])
+
+# =============================
+# CONSOLIDADO
+# =============================
+with abas[2]:
+    st.markdown("## Consolidação")
+
+    df_consol = df_tri.copy()
+
+    c1,c2,c3,c4 = st.columns(4)
+    c1.metric("Principal", f"R$ {formato_br(df_consol['vlr_principal'].sum())}")
+    c2.metric("Multa", f"R$ {formato_br(df_consol['vlr_multa'].sum())}")
+    c3.metric("Juros", f"R$ {formato_br(df_consol['vlr_juro_encargo'].sum())}")
+    c4.metric("Total", f"R$ {formato_br(df_consol['vlr_total'].sum())}")
+
+    consolidado = (
+        df_consol.groupby("cf_empresa")[valores]
+        .sum()
+        .reset_index()
+    )
+
+    for col in valores:
+        consolidado[col] = consolidado[col].apply(lambda x: f"R$ {formato_br(x)}")
+
+    render_table(consolidado)
