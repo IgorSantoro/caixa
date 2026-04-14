@@ -38,6 +38,16 @@ def carregar_dados():
 df = carregar_dados()
 
 # =============================
+# 🔥 REMOVER CANCELADAS
+# =============================
+df = df[
+    df["dsc_situacao"]
+    .astype(str)
+    .str.upper()
+    .str.strip() != "CANCELADA"
+]
+
+# =============================
 # TRATAMENTO
 # =============================
 colunas = [
@@ -83,11 +93,11 @@ tri = st.sidebar.selectbox("Trimestre", [1,2,3,4])
 df_tri = df[(df["Ano"]==ano) & (df["Trimestre"]==tri)]
 
 # =============================
-# FUNÇÃO PARA TABELA COMPATÍVEL
+# FUNÇÃO TABELA COMPATÍVEL
 # =============================
 def mostrar_tabela(df):
     if sys.version_info >= (3, 13):
-        st.table(df)  # evita erro do pyarrow
+        st.table(df)
     else:
         st.dataframe(df)
 
