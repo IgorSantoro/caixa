@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
-from io import BytesIO
+import sys
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
@@ -9,95 +9,6 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import inch
 
 st.set_page_config(layout="wide")
-
-# =============================
-# ESTILO GLOBAL (TEMA CLARO)
-# =============================
-st.markdown("""
-<style>
-
-/* ===== BASE ===== */
-html, body, [class*="css"] {
-    background-color: #FFFFFF !important;
-    color: #000000 !important;
-    font-family: Arial, sans-serif !important;
-    font-size: 13px !important;
-}
-
-/* ===== KPI ===== */
-[data-testid="stMetric"] {
-    background-color: #FFFFFF;
-    border: 1px solid #D1D5DB;
-    padding: 12px;
-    border-radius: 8px;
-}
-
-/* Texto KPI */
-[data-testid="stMetricLabel"] {
-    color: #6B7280;
-}
-
-[data-testid="stMetricValue"] {
-    color: #000000;
-    font-weight: bold;
-}
-
-/* ===== CARDS ===== */
-.card {
-    background-color: #FFFFFF;
-    padding: 16px;
-    border-radius: 10px;
-    border: 1px solid #E5E7EB;
-    margin-bottom: 12px;
-}
-
-/* ===== BOTÕES ===== */
-button {
-    background-color: #F3F4F6 !important;
-    color: #000 !important;
-    border: 1px solid #D1D5DB !important;
-}
-
-/* ===== TABELA ===== */
-th {
-    background-color: #F9FAFB !important;
-    color: #000000;
-    border: 1px solid #E5E7EB;
-}
-
-td {
-    background-color: #FFFFFF;
-    color: #000000;
-    border: 1px solid #E5E7EB;
-}
-
-/* ===== SIDEBAR ===== */
-section[data-testid="stSidebar"] {
-    background-color: #F9FAFB !important;
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-# =============================
-# FUNÇÃO TABELA
-# =============================
-def render_table(df):
-    html = "<table style='width:100%; border-collapse:collapse;'>"
-    
-    html += "<tr>"
-    for col in df.columns:
-        html += f"<th style='padding:6px;'>{col}</th>"
-    html += "</tr>"
-    
-    for _, row in df.iterrows():
-        html += "<tr>"
-        for val in row:
-            html += f"<td style='padding:6px;'>{val}</td>"
-        html += "</tr>"
-    
-    html += "</table>"
-    st.markdown(html, unsafe_allow_html=True)
 
 # =============================
 # ESTADO
@@ -116,8 +27,7 @@ def formato_br(valor):
 # =============================
 @st.cache_data
 def carregar_dados():
-    caminho = r"C:\\Users\\iss55\\igor\\Fluxo de Caixa"
-    arquivo = os.path.join(caminho, "base.xls")
+    arquivo = "base.xls"
 
     if not os.path.exists(arquivo):
         st.error("Arquivo não encontrado")
@@ -173,6 +83,15 @@ tri = st.sidebar.selectbox("Trimestre", [1,2,3,4])
 df_tri = df[(df["Ano"]==ano) & (df["Trimestre"]==tri)]
 
 # =============================
+# FUNÇÃO PARA TABELA COMPATÍVEL
+# =============================
+def mostrar_tabela(df):
+    if sys.version_info >= (3, 13):
+        st.table(df)  # evita erro do pyarrow
+    else:
+        st.dataframe(df)
+
+# =============================
 # ABAS
 # =============================
 abas = st.tabs(["📊 Dashboard", "📑 Analítico", "📈 Consolidados"])
@@ -181,7 +100,7 @@ abas = st.tabs(["📊 Dashboard", "📑 Analítico", "📈 Consolidados"])
 # DASHBOARD
 # =============================
 with abas[0]:
-    st.markdown("<h2 style='color:#111827;'>📊 Visão Corporativa</h2>", unsafe_allow_html=True)
+    st.markdown("## 📊 Visão Corporativa")
 
     empresas = (
         df_tri.groupby("cf_empresa")["vlr_total"]
@@ -198,9 +117,9 @@ with abas[0]:
         csll = df_emp[df_emp["Imposto"]=="CSLL"]["vlr_total"].sum()
 
         st.markdown(f"""
-        <div class="card">
-            <b>{emp}</b><br><br>
-            Total: <b>R$ {formato_br(total)}</b><br>
+        <div style="border:1px solid #ddd; padding:10px; margin-bottom:10px;">
+            <b>{emp}</b><br>
+            Total: R$ {formato_br(total)}<br>
             IRPJ: R$ {formato_br(irpj)}<br>
             CSLL: R$ {formato_br(csll)}
         </div>
@@ -230,7 +149,12 @@ with abas[1]:
         c5.metric("Total", f"R$ {formato_br(df_emp['vlr_total'].sum())}")
 
         st.markdown("### Detalhamento")
-        render_table(df_emp[valores])
+
+        df_formatado = df_emp[valores].copy()
+        for col in df_formatado.columns:
+            df_formatado[col] = df_formatado[col].apply(lambda x: f"R$ {formato_br(x)}")
+
+        mostrar_tabela(df_formatado)
 
 # =============================
 # CONSOLIDADO
@@ -255,4 +179,4 @@ with abas[2]:
     for col in valores:
         consolidado[col] = consolidado[col].apply(lambda x: f"R$ {formato_br(x)}")
 
-    render_table(consolidado)
+    mostrar_tabela(consolidado)
