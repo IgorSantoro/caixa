@@ -2,11 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import sys
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import inch
+from io import BytesIO
 
 st.set_page_config(layout="wide")
 
@@ -21,6 +17,15 @@ if "empresa" not in st.session_state:
 # =============================
 def formato_br(valor):
     return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+# =============================
+# EXPORTAÇÃO EXCEL
+# =============================
+def exportar_excel(df):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        df.to_excel(writer, index=False, sheet_name="Dados")
+    return output.getvalue()
 
 # =============================
 # CARREGAR BASE
@@ -38,7 +43,7 @@ def carregar_dados():
 df = carregar_dados()
 
 # =============================
-# 🔥 REMOVER CANCELADAS
+# REMOVER CANCELADAS
 # =============================
 df = df[
     df["dsc_situacao"]
@@ -84,16 +89,36 @@ if df.empty:
     st.stop()
 
 # =============================
-# FILTROS
+# FILTROS (MELHORADOS)
 # =============================
 st.sidebar.header("Filtros")
+
 ano = st.sidebar.selectbox("Ano", sorted(df["Ano"].unique()))
 tri = st.sidebar.selectbox("Trimestre", [1,2,3,4])
 
-df_tri = df[(df["Ano"]==ano) & (df["Trimestre"]==tri)]
+empresas_sel = st.sidebar.multiselect(
+    "Empresa",
+    options=sorted(df["cf_empresa"].unique()),
+    default=None
+)
+
+imposto_sel = st.sidebar.multiselect(
+    "Imposto",
+    options=["IRPJ", "CSLL"],
+    default=["IRPJ", "CSLL"]
+)
+
+df_filtrado = df[
+    (df["Ano"] == ano) &
+    (df["Trimestre"] == tri) &
+    (df["Imposto"].isin(imposto_sel))
+]
+
+if empresas_sel:
+    df_filtrado = df_filtrado[df_filtrado["cf_empresa"].isin(empresas_sel)]
 
 # =============================
-# FUNÇÃO TABELA COMPATÍVEL
+# FUNÇÃO TABELA
 # =============================
 def mostrar_tabela(df):
     if sys.version_info >= (3, 13):
@@ -113,14 +138,14 @@ with abas[0]:
     st.markdown("## 📊 Visão Corporativa")
 
     empresas = (
-        df_tri.groupby("cf_empresa")["vlr_total"]
+        df_filtrado.groupby("cf_empresa")["vlr_total"]
         .sum()
         .sort_values(ascending=False)
         .index
     )
 
     for emp in empresas:
-        df_emp = df_tri[df_tri["cf_empresa"]==emp]
+        df_emp = df_filtrado[df_filtrado["cf_empresa"]==emp]
 
         total = df_emp["vlr_total"].sum()
         irpj = df_emp[df_emp["Imposto"]=="IRPJ"]["vlr_total"].sum()
@@ -139,7 +164,7 @@ with abas[0]:
             st.session_state.empresa = emp
 
 # =============================
-# ANALÍTICO
+# ANALÍTICO + EXPORTAÇÃO
 # =============================
 with abas[1]:
     emp = st.session_state.empresa
@@ -147,7 +172,7 @@ with abas[1]:
     if not emp:
         st.info("Selecione uma empresa no Dashboard")
     else:
-        df_emp = df_tri[df_tri["cf_empresa"]==emp]
+        df_emp = df_filtrado[df_filtrado["cf_empresa"]==emp]
 
         st.markdown(f"## {emp}")
 
@@ -160,25 +185,22 @@ with abas[1]:
 
         st.markdown("### Detalhamento")
 
-        df_formatado = df_emp[valores].copy()
-        for col in df_formatado.columns:
-            df_formatado[col] = df_formatado[col].apply(lambda x: f"R$ {formato_br(x)}")
+        mostrar_tabela(df_emp)
 
-        mostrar_tabela(df_formatado)
+        # 🔽 EXPORTAR
+        st.download_button(
+            "📥 Exportar Analítico para Excel",
+            exportar_excel(df_emp),
+            file_name=f"analitico_{emp}.xlsx"
+        )
 
 # =============================
-# CONSOLIDADO
+# CONSOLIDADO + EXPORTAÇÃO
 # =============================
 with abas[2]:
     st.markdown("## Consolidação")
 
-    df_consol = df_tri.copy()
-
-    c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Principal", f"R$ {formato_br(df_consol['vlr_principal'].sum())}")
-    c2.metric("Multa", f"R$ {formato_br(df_consol['vlr_multa'].sum())}")
-    c3.metric("Juros", f"R$ {formato_br(df_consol['vlr_juro_encargo'].sum())}")
-    c4.metric("Total", f"R$ {formato_br(df_consol['vlr_total'].sum())}")
+    df_consol = df_filtrado.copy()
 
     consolidado = (
         df_consol.groupby("cf_empresa")[valores]
@@ -186,7 +208,11 @@ with abas[2]:
         .reset_index()
     )
 
-    for col in valores:
-        consolidado[col] = consolidado[col].apply(lambda x: f"R$ {formato_br(x)}")
-
     mostrar_tabela(consolidado)
+
+    # 🔽 EXPORTAR
+    st.download_button(
+        "📥 Exportar Consolidado para Excel",
+        exportar_excel(consolidado),
+        file_name="consolidado.xlsx"
+    )
