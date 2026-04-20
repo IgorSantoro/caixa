@@ -89,25 +89,51 @@ if df.empty:
     st.stop()
 
 # =============================
-# FILTROS (MELHORADOS)
+# FILTROS (LUPA + BUSCA)
 # =============================
-st.sidebar.header("Filtros")
+st.sidebar.markdown("## 🔎 Filtros")
 
 ano = st.sidebar.selectbox("Ano", sorted(df["Ano"].unique()))
 tri = st.sidebar.selectbox("Trimestre", [1,2,3,4])
 
-empresas_sel = st.sidebar.multiselect(
-    "Empresa",
-    options=sorted(df["cf_empresa"].unique()),
-    default=None
-)
+# 🔎 EMPRESA
+with st.sidebar.expander("🔎 Empresa", expanded=False):
+    busca_empresa = st.text_input("Pesquisar empresa")
 
-imposto_sel = st.sidebar.multiselect(
-    "Imposto",
-    options=["IRPJ", "CSLL"],
-    default=["IRPJ", "CSLL"]
-)
+    lista_empresas = sorted(df["cf_empresa"].unique())
 
+    if busca_empresa:
+        lista_empresas = [
+            e for e in lista_empresas
+            if busca_empresa.lower() in str(e).lower()
+        ]
+
+    empresas_sel = st.multiselect(
+        "Selecionar",
+        options=lista_empresas
+    )
+
+# 🔎 IMPOSTO
+with st.sidebar.expander("🔎 Imposto", expanded=False):
+    busca_imposto = st.text_input("Pesquisar imposto")
+
+    lista_impostos = ["IRPJ", "CSLL"]
+
+    if busca_imposto:
+        lista_impostos = [
+            i for i in lista_impostos
+            if busca_imposto.lower() in i.lower()
+        ]
+
+    imposto_sel = st.multiselect(
+        "Selecionar",
+        options=lista_impostos,
+        default=["IRPJ", "CSLL"]
+    )
+
+# =============================
+# APLICAR FILTRO
+# =============================
 df_filtrado = df[
     (df["Ano"] == ano) &
     (df["Trimestre"] == tri) &
@@ -184,10 +210,8 @@ with abas[1]:
         c5.metric("Total", f"R$ {formato_br(df_emp['vlr_total'].sum())}")
 
         st.markdown("### Detalhamento")
-
         mostrar_tabela(df_emp)
 
-        # 🔽 EXPORTAR
         st.download_button(
             "📥 Exportar Analítico para Excel",
             exportar_excel(df_emp),
@@ -210,7 +234,6 @@ with abas[2]:
 
     mostrar_tabela(consolidado)
 
-    # 🔽 EXPORTAR
     st.download_button(
         "📥 Exportar Consolidado para Excel",
         exportar_excel(consolidado),
