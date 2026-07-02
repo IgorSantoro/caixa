@@ -3,6 +3,7 @@ import pandas as pd
 import os
 import io
 import html
+import re
 
 # =============================
 # CONFIG
@@ -33,7 +34,6 @@ CONSOLIDADOS = {
         "231 - ENERGISA GERACAO CENTRAL SOLAR RIO DO PEIXE I S.A.",
         "232 - ENERGISA GERACAO CENTRAL SOLAR RIO DO PEIXE II S.A.",
     ],
-    "Transmissão": [],
     "Soluções": [
         "015 - ENERGISA SOLUÇÕES S.A.",
         "160 - ENERGISA SOLUCOES CONSTRUCOES E SERV EM LINHAS E REDES S.A.",
@@ -452,6 +452,16 @@ def esc(texto):
     return html.escape(str(texto))
 
 
+def extrair_codigo(texto):
+    """Extrai o código numérico no início do texto (ex.: '126 - PARQUE EOLICO...' -> 126).
+    Usado para casar empresas com os consolidados pelo CÓDIGO, que é estável,
+    em vez do nome, que pode variar de grafia entre o relatório e a lista informada."""
+    if texto is None:
+        return None
+    m = re.match(r"\s*0*(\d+)", str(texto))
+    return int(m.group(1)) if m else None
+
+
 def exportar_excel(dataframe: pd.DataFrame, nome_aba: str = "Dados") -> bytes:
     """Exporta com openpyxl — sem dependência de xlsxwriter."""
     buf  = io.BytesIO()
@@ -542,6 +552,10 @@ df["cod_pagamento"] = (
 
 MAPA_IMPOSTO = {"2362": "IRPJ", "2089": "IRPJ", "2484": "CSLL", "2372": "CSLL"}
 df = df[df["cod_pagamento"].isin(MAPA_IMPOSTO)]
+
+# Código numérico da empresa (mais confiável que o nome para casar com os consolidados,
+# já que o nome pode variar de grafia entre o relatório e a lista informada)
+df["cod_empresa"] = df["cf_empresa"].apply(extrair_codigo)
 
 valores = colunas[3:]
 for col in valores:
@@ -1021,17 +1035,31 @@ with abas[2]:
                 </div>""", unsafe_allow_html=True)
                 continue
 
-            df_grupo = df_tri[df_tri["cf_empresa"].isin(lista_empresas)]
+            # Casa empresas pelo CÓDIGO numérico (ex.: 126), não pelo nome — o nome pode
+            # vir com grafia levemente diferente no relatório, mas o código é estável.
+            codigos_grupo = sorted({c for c in (extrair_codigo(e) for e in lista_empresas) if c is not None})
+            sem_codigo = [e for e in lista_empresas if extrair_codigo(e) is None]
 
-            encontradas = df_grupo["cf_empresa"].nunique()
-            esperadas   = len(set(lista_empresas))
-            if encontradas < esperadas:
-                nao_encontradas = sorted(set(lista_empresas) - set(df_grupo["cf_empresa"].unique()))
+            df_grupo = df_tri[df_tri["cod_empresa"].isin(codigos_grupo)]
+
+            codigos_encontrados = set(df_grupo["cod_empresa"].dropna().unique())
+            codigos_faltantes   = [c for c in codigos_grupo if c not in codigos_encontrados]
+
+            if codigos_faltantes:
+                nomes_faltantes = [
+                    e for e in lista_empresas if extrair_codigo(e) in codigos_faltantes
+                ]
                 st.info(
-                    f"{encontradas} de {esperadas} empresa(s) do grupo têm pagamentos neste período. "
-                    f"Sem movimento ou nome divergente: {', '.join(nao_encontradas[:10])}"
-                    + ("..." if len(nao_encontradas) > 10 else ""),
+                    f"{len(codigos_encontrados)} de {len(codigos_grupo)} empresa(s) do grupo têm pagamentos neste período. "
+                    f"Sem movimento (código): {', '.join(nomes_faltantes[:10])}"
+                    + ("..." if len(nomes_faltantes) > 10 else ""),
                     icon="ℹ️"
+                )
+            if sem_codigo:
+                st.warning(
+                    f"Não foi possível identificar o código destas empresas na lista do consolidado "
+                    f"(verifique se começam com o número): {', '.join(sem_codigo)}",
+                    icon="⚠️"
                 )
 
             if df_grupo.empty:
