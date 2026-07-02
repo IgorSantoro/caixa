@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 import os
 import io
- 
+import html
+
 # =============================
 # CONFIG
 # =============================
@@ -12,21 +13,38 @@ st.set_page_config(
     page_icon="📊",
     initial_sidebar_state="expanded",
 )
- 
+
+# =============================
+# CONSOLIDADOS — mapeamento grupo → empresas
+# =============================
+# Preencha cada lista com o nome EXATO das empresas (conforme aparecem na
+# coluna cf_empresa do base.xls). Pode colar quantas quiser em cada lista.
+# Ex.: "ESA": ["EMPRESA A LTDA", "EMPRESA B LTDA"]
+CONSOLIDADOS = {
+    "ESA": [],
+    "Geração": [],
+    "Transmissão": [],
+    "Soluções": [],
+    "Alsol": [],
+    "Nova Denerge": [],
+    "EBIOGÁS": [],
+    "EDISGAS": [],
+}
+
 # =============================
 # CSS
 # =============================
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
- 
+
 *, html, body, [class*="css"] {
     font-family: 'IBM Plex Sans', sans-serif !important;
 }
- 
+
 .stApp { background: #060810; }
 .block-container { padding: 1.75rem 2rem 3rem !important; max-width: 100% !important; }
- 
+
 /* ─── sidebar ─── */
 [data-testid="stSidebar"] {
     background: #0C0F1A !important;
@@ -40,7 +58,7 @@ st.markdown("""
     color: #C2CCDF !important;
     border-radius: 6px !important;
 }
- 
+
 /* ─── top bar ─── */
 .top-bar {
     display: flex;
@@ -83,7 +101,7 @@ st.markdown("""
     0%, 100% { opacity: 1; transform: scale(1); }
     50%       { opacity: 0.4; transform: scale(0.7); }
 }
- 
+
 /* ─── KPI row ─── */
 .kpi-row {
     display: grid;
@@ -134,7 +152,7 @@ st.markdown("""
 .kpi-val.teal   { color: #3ABFBF; }
 .kpi-val.red    { color: #F05A5A; }
 .kpi-sub { font-size: 0.65rem; color: #2A3A50; margin-top: 5px; }
- 
+
 /* ─── section heading ─── */
 .sec-head {
     font-size: 0.63rem; font-weight: 700; color: #3A4A60;
@@ -143,7 +161,7 @@ st.markdown("""
     display: flex; align-items: center; gap: 10px;
 }
 .sec-head::after { content: ""; flex: 1; height: 1px; background: #111827; }
- 
+
 /* ─── text inputs ─── */
 .stTextInput > div > input {
     background: #0C0F1A !important;
@@ -165,7 +183,7 @@ st.markdown("""
     font-weight: 700 !important; text-transform: uppercase !important;
     letter-spacing: 0.9px !important;
 }
- 
+
 /* ─── company table ─── */
 .ctable { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
 .ctable thead tr { background: #080B15; border-bottom: 1px solid #1A2035; }
@@ -208,14 +226,14 @@ st.markdown("""
 .share-high { background: #0D2A1A; color: #34C77B; }
 .share-mid  { background: #2A1A0D; color: #F0A429; }
 .share-low  { background: #1A0D0D; color: #F05A5A; }
- 
+
 /* ─── result count ─── */
 .result-count {
     font-size: 0.68rem; color: #3A4A60; font-weight: 600;
     padding: 3px 10px; border: 1px solid #1A2035;
     border-radius: 20px; background: #0C0F1A;
 }
- 
+
 /* ─── tabs ─── */
 .stTabs [data-baseweb="tab-list"] {
     background: #0C0F1A !important;
@@ -232,13 +250,13 @@ st.markdown("""
 .stTabs [aria-selected="true"] {
     background: #151C30 !important; color: #C2CCDF !important;
 }
- 
+
 /* ─── dataframe ─── */
 [data-testid="stDataFrameResizable"] {
     border: 1px solid #1A2035 !important;
     border-radius: 10px !important; overflow: hidden !important;
 }
- 
+
 /* ─── metrics ─── */
 [data-testid="stMetric"] {
     background: #0C0F1A !important; border: 1px solid #1A2035 !important;
@@ -251,7 +269,7 @@ st.markdown("""
 [data-testid="stMetricValue"] {
     color: #E2E8F4 !important; font-family: 'IBM Plex Mono', monospace !important;
 }
- 
+
 /* ─── download button ─── */
 .stDownloadButton > button {
     background: #0D2040 !important; color: #3A8FF5 !important;
@@ -263,7 +281,7 @@ st.markdown("""
     background: #3A8FF5 !important; color: #fff !important;
     border-color: #3A8FF5 !important; transform: translateY(-1px) !important;
 }
- 
+
 /* ─── regular button ─── */
 .stButton > button {
     background: #111527 !important; color: #7A90B0 !important;
@@ -273,14 +291,14 @@ st.markdown("""
 .stButton > button:hover {
     border-color: #3A8FF5 !important; color: #3A8FF5 !important;
 }
- 
+
 /* ─── info box ─── */
 .info-box {
     background: #0C0F1A; border: 1px dashed #1A2035; border-radius: 12px;
     padding: 3rem 1.5rem; text-align: center; color: #2E3A50; font-size: 0.88rem;
 }
 .info-box .ico { font-size: 2.2rem; margin-bottom: 12px; opacity: 0.6; }
- 
+
 /* ─── summary cards ─── */
 .summary-row {
     display: grid; grid-template-columns: repeat(3, 1fr);
@@ -304,7 +322,7 @@ st.markdown("""
 .sum-card-val.blue   { color: #3A8FF5; }
 .sum-card-val.green  { color: #34C77B; }
 .sum-card-val.purple { color: #9B6EF3; }
- 
+
 /* selectbox */
 .stSelectbox > div > div {
     background: #0C0F1A !important; border: 1px solid #1E2640 !important;
@@ -315,7 +333,7 @@ st.markdown("""
     color: #C2CCDF !important; border-radius: 7px !important;
 }
 [data-baseweb="tag"] { background: #111E38 !important; border: 1px solid #1A3A6A !important; }
- 
+
 /* sidebar helpers */
 .sdiv { border: none; border-top: 1px solid #1A2035; margin: 1rem 0; }
 .slabel {
@@ -326,20 +344,25 @@ st.markdown("""
 }
 </style>
 """, unsafe_allow_html=True)
- 
+
 # =============================
 # ESTADO
 # =============================
 if "empresa" not in st.session_state:
     st.session_state.empresa = None
- 
+
 # =============================
 # UTILS
 # =============================
 def fmt(valor):
     return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
- 
- 
+
+
+def esc(texto):
+    """Escapa texto vindo do usuário ou da planilha antes de injetar em HTML."""
+    return html.escape(str(texto))
+
+
 def exportar_excel(dataframe: pd.DataFrame, nome_aba: str = "Dados") -> bytes:
     """Exporta com openpyxl — sem dependência de xlsxwriter."""
     buf  = io.BytesIO()
@@ -350,13 +373,13 @@ def exportar_excel(dataframe: pd.DataFrame, nome_aba: str = "Dados") -> bytes:
         try:
             from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
             from openpyxl.utils import get_column_letter
- 
+
             hdr_fill   = PatternFill("solid", fgColor="1F3A6A")
             hdr_font   = Font(bold=True, color="FFFFFF", name="Calibri", size=11)
             alt_fill   = PatternFill("solid", fgColor="EFF3FB")
             row_border = Border(bottom=Side(style="thin", color="DDE3F0"))
             money_cols = {c for c in dataframe.columns if "vlr_" in str(c).lower()}
- 
+
             # Cabeçalho
             for ci, cell in enumerate(ws[1], 1):
                 cell.fill      = hdr_fill
@@ -370,7 +393,7 @@ def exportar_excel(dataframe: pd.DataFrame, nome_aba: str = "Dados") -> bytes:
                     if not dataframe.empty else 12
                 )
                 ws.column_dimensions[get_column_letter(ci)].width = min(w, 30)
- 
+
             # Linhas de dados
             for ri, row in enumerate(ws.iter_rows(min_row=2), 2):
                 fill = alt_fill if ri % 2 == 0 else None
@@ -388,25 +411,32 @@ def exportar_excel(dataframe: pd.DataFrame, nome_aba: str = "Dados") -> bytes:
                         except Exception:
                             pass
             ws.freeze_panes = "A2"
-        except Exception:
-            pass  # salva sem estilo se algo falhar
+        except Exception as e:
+            # Não interrompe a exportação, mas avisa que o Excel saiu sem estilo
+            st.warning(f"Excel exportado sem formatação avançada ({e}).", icon="⚠️")
     return buf.getvalue()
- 
- 
+
+
 # =============================
 # DADOS
 # =============================
+CAMINHO_BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "base.xls")
+
+
 @st.cache_data
-def carregar_dados():
-    arquivo = "base.xls"
-    if not os.path.exists(arquivo):
-        st.error("Arquivo base.xls não encontrado.")
-        st.stop()
-    return pd.read_excel(arquivo)
- 
-df = carregar_dados()
+def carregar_dados(caminho: str, mtime: float):
+    """mtime é usado só como parte da chave de cache: se o arquivo mudar
+    no disco, o Streamlit percebe e recarrega automaticamente."""
+    return pd.read_excel(caminho)
+
+
+if not os.path.exists(CAMINHO_BASE):
+    st.error(f"Arquivo base.xls não encontrado em: {CAMINHO_BASE}")
+    st.stop()
+
+df = carregar_dados(CAMINHO_BASE, os.path.getmtime(CAMINHO_BASE))
 df = df[df["dsc_situacao"].astype(str).str.upper().str.strip() != "CANCELADA"]
- 
+
 colunas = [
     "cod_pagamento", "dat_pagamento", "cf_empresa",
     "vlr_principal", "vlr_multa", "vlr_juro_encargo", "vlr_outra_entidade", "vlr_total"
@@ -414,27 +444,33 @@ colunas = [
 for col in colunas:
     if col not in df.columns:
         df[col] = 0
- 
-df["cod_pagamento"] = df["cod_pagamento"].astype(str).str.strip()
-df = df[df["cod_pagamento"].isin(["2362", "2484", "2089", "2372"])]
- 
+
+# Normaliza cod_pagamento removendo ".0" que aparece quando a coluna vem como float
+df["cod_pagamento"] = (
+    df["cod_pagamento"].astype(str).str.strip()
+    .str.replace(r"\.0$", "", regex=True)
+)
+
+MAPA_IMPOSTO = {"2362": "IRPJ", "2089": "IRPJ", "2484": "CSLL", "2372": "CSLL"}
+df = df[df["cod_pagamento"].isin(MAPA_IMPOSTO)]
+
 valores = colunas[3:]
 for col in valores:
     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
- 
+
+n_antes = len(df)
 df["dat_pagamento"] = pd.to_datetime(df["dat_pagamento"], dayfirst=True, errors="coerce")
 df = df.dropna(subset=["dat_pagamento"])
+n_descartados = n_antes - len(df)
+
 df["Ano"]       = df["dat_pagamento"].dt.year
 df["Trimestre"] = df["dat_pagamento"].dt.quarter
-df["Imposto"]   = df["cod_pagamento"].map({
-    "2362": "IRPJ", "2089": "IRPJ",
-    "2484": "CSLL", "2372": "CSLL"
-})
- 
+df["Imposto"]   = df["cod_pagamento"].map(MAPA_IMPOSTO)
+
 if df.empty:
     st.error("Sem dados após tratamento.")
     st.stop()
- 
+
 # =============================
 # SIDEBAR — só período
 # =============================
@@ -446,10 +482,13 @@ with st.sidebar:
         <div style="font-size:0.68rem;color:#2E3A50;margin-top:3px;letter-spacing:0.5px;">IRPJ &amp; CSLL</div>
     </div>
     """, unsafe_allow_html=True)
- 
+
+    if n_descartados > 0:
+        st.warning(f"{n_descartados} registro(s) com data inválida foram ignorados.", icon="⚠️")
+
     st.markdown('<span class="slabel">Ano de Referência</span>', unsafe_allow_html=True)
     ano = st.selectbox("Ano", sorted(df["Ano"].unique()), label_visibility="collapsed")
- 
+
     st.markdown("<hr class='sdiv'>", unsafe_allow_html=True)
     st.markdown('<span class="slabel">Trimestre</span>', unsafe_allow_html=True)
     tri = st.selectbox(
@@ -457,9 +496,9 @@ with st.sidebar:
         format_func=lambda x: f"Q{x} — {['Jan–Mar','Abr–Jun','Jul–Set','Out–Dez'][x-1]}",
         label_visibility="collapsed"
     )
- 
+
     st.markdown("<hr class='sdiv'>", unsafe_allow_html=True)
- 
+
     # mini‑resumo na sidebar
     df_side = df[(df["Ano"] == ano) & (df["Trimestre"] == tri)]
     n_side  = df_side["cf_empresa"].nunique()
@@ -479,12 +518,16 @@ with st.sidebar:
         </div>
     </div>
     """, unsafe_allow_html=True)
- 
+
 # =============================
 # FILTRO POR PERÍODO
 # =============================
 df_tri = df[(df["Ano"] == ano) & (df["Trimestre"] == tri)].copy()
- 
+
+# Se a empresa selecionada no Dashboard não existir mais neste período, limpa a seleção
+if st.session_state.empresa and st.session_state.empresa not in df_tri["cf_empresa"].unique():
+    st.session_state.empresa = None
+
 # =============================
 # TOP BAR
 # =============================
@@ -504,7 +547,7 @@ st.markdown(f"""
     </div>
 </div>
 """, unsafe_allow_html=True)
- 
+
 # =============================
 # KPIs
 # =============================
@@ -514,11 +557,11 @@ t_csll  = df_tri[df_tri["Imposto"] == "CSLL"]["vlr_total"].sum()
 t_multa = df_tri["vlr_multa"].sum()
 t_juros = df_tri["vlr_juro_encargo"].sum()
 n_emp   = df_tri["cf_empresa"].nunique()
- 
+
 pct_irpj  = (t_irpj  / t_geral * 100) if t_geral > 0 else 0
 pct_csll  = (t_csll  / t_geral * 100) if t_geral > 0 else 0
 pct_multa = (t_multa / t_geral * 100) if t_geral > 0 else 0
- 
+
 st.markdown(f"""
 <div class="kpi-row">
     <div class="kpi blue">
@@ -559,15 +602,15 @@ st.markdown(f"""
     </div>
 </div>
 """, unsafe_allow_html=True)
- 
+
 # =============================
 # ABAS
 # =============================
 abas = st.tabs(["  📊 Dashboard  ", "  📑 Analítico  ", "  📈 Consolidado  "])
- 
+
 # ─── DASHBOARD ────────────────────────────────────────
 with abas[0]:
- 
+
     # Filtros inline: busca + tipo de imposto + exportar
     col_s, col_imp, col_exp = st.columns([3, 1.4, 1])
     with col_s:
@@ -583,23 +626,23 @@ with abas[0]:
             default=["IRPJ", "CSLL"],
             key="imp_dash"
         )
- 
+
     # Dataset filtrado pelo imposto selecionado
     df_dash = df_tri[df_tri["Imposto"].isin(imp_sel)] if imp_sel else df_tri.copy()
- 
+
     # Ranking por total
     rank = (
         df_dash.groupby("cf_empresa")["vlr_total"]
         .sum().sort_values(ascending=False)
     )
- 
+
     # Aplica busca por texto
     if busca.strip():
         rank = rank[rank.index.astype(str).str.upper().str.contains(busca.strip().upper())]
- 
+
     max_val  = rank.max() if not rank.empty else 1
     n_result = len(rank)
- 
+
     with col_exp:
         df_dash_exp = (
             df_dash.groupby("cf_empresa")[valores]
@@ -612,7 +655,7 @@ with abas[0]:
             file_name=f"dashboard_{ano}_Q{tri}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
- 
+
     # Cabeçalho da lista com contagem
     hc, rc = st.columns([6, 1])
     with hc:
@@ -624,36 +667,39 @@ with abas[0]:
             f"</div>",
             unsafe_allow_html=True
         )
- 
+
     if rank.empty:
-        msg = f'para <strong>"{busca}"</strong>' if busca.strip() else "neste período"
+        msg = f'para <strong>"{esc(busca)}"</strong>' if busca.strip() else "neste período"
         st.markdown(f"""
         <div class="info-box">
             <div class="ico">🔍</div>
             <p>Nenhuma empresa encontrada {msg}.</p>
         </div>""", unsafe_allow_html=True)
     else:
+        # Pré-agrega uma única vez em vez de refiltrar o dataframe a cada empresa do loop
+        agg_imp = df_dash.groupby(["cf_empresa", "Imposto"])["vlr_total"].sum().unstack(fill_value=0)
+        agg_ext = df_dash.groupby("cf_empresa")[["vlr_multa", "vlr_juro_encargo"]].sum()
+
         rows_html = ""
         for emp, total in rank.items():
-            df_e  = df_dash[df_dash["cf_empresa"] == emp]
-            irpj  = df_e[df_e["Imposto"] == "IRPJ"]["vlr_total"].sum()
-            csll  = df_e[df_e["Imposto"] == "CSLL"]["vlr_total"].sum()
-            multa = df_e["vlr_multa"].sum()
-            juros = df_e["vlr_juro_encargo"].sum()
+            irpj  = agg_imp.loc[emp, "IRPJ"] if emp in agg_imp.index and "IRPJ" in agg_imp.columns else 0
+            csll  = agg_imp.loc[emp, "CSLL"] if emp in agg_imp.index and "CSLL" in agg_imp.columns else 0
+            multa = agg_ext.loc[emp, "vlr_multa"] if emp in agg_ext.index else 0
+            juros = agg_ext.loc[emp, "vlr_juro_encargo"] if emp in agg_ext.index else 0
             pct   = (total / max_val * 100) if max_val > 0 else 0
             share = (total / t_geral * 100) if t_geral > 0 else 0
- 
+
             share_class = "share-high" if share >= 20 else ("share-mid" if share >= 8 else "share-low")
             bar_color   = "#3A8FF5" if irpj >= csll else "#9B6EF3"
- 
+
             pill_i = '<span class="pill pill-irpj">IRPJ</span>' if irpj > 0 else ""
             pill_c = '<span class="pill pill-csll">CSLL</span>' if csll > 0 else ""
- 
+
             rows_html += f"""
             <tr>
                 <td class="emp-name">
                     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px;">
-                        <span>{emp}{pill_i}{pill_c}</span>
+                        <span>{esc(emp)}{pill_i}{pill_c}</span>
                         <span class="share-badge {share_class}">{share:.1f}%</span>
                     </div>
                     <div class="bar-wrap">
@@ -666,7 +712,7 @@ with abas[0]:
                 <td class="num">R$ {fmt(juros)}</td>
                 <td class="total-num">R$ {fmt(total)}</td>
             </tr>"""
- 
+
         st.markdown(f"""
         <div style="background:#0A0D18;border:1px solid #1A2035;border-radius:12px;overflow:hidden;">
         <table class="ctable">
@@ -681,7 +727,7 @@ with abas[0]:
             <tbody>{rows_html}</tbody>
         </table>
         </div>""", unsafe_allow_html=True)
- 
+
         st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
         emp_sel = st.selectbox(
             "Abrir empresa no Analítico →",
@@ -691,11 +737,11 @@ with abas[0]:
         if emp_sel != "— selecione uma empresa —":
             st.session_state.empresa = emp_sel
             st.success(f"✓  **{emp_sel}** carregada — acesse a aba **📑 Analítico**")
- 
+
 # ─── ANALÍTICO ────────────────────────────────────────
 with abas[1]:
     emp = st.session_state.empresa
- 
+
     if not emp:
         st.markdown("""
         <div class="info-box">
@@ -704,12 +750,12 @@ with abas[1]:
         </div>""", unsafe_allow_html=True)
     else:
         df_emp = df_tri[df_tri["cf_empresa"] == emp].copy()
-        st.markdown(f'<div class="sec-head">{emp}</div>', unsafe_allow_html=True)
- 
+        st.markdown(f'<div class="sec-head">{esc(emp)}</div>', unsafe_allow_html=True)
+
         total_emp = df_emp["vlr_total"].sum()
         irpj_emp  = df_emp[df_emp["Imposto"] == "IRPJ"]["vlr_total"].sum()
         csll_emp  = df_emp[df_emp["Imposto"] == "CSLL"]["vlr_total"].sum()
- 
+
         st.markdown(f"""
         <div class="summary-row">
             <div class="sum-card">
@@ -735,16 +781,16 @@ with abas[1]:
             </div>
         </div>
         """, unsafe_allow_html=True)
- 
+
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Principal", f"R$ {fmt(df_emp['vlr_principal'].sum())}")
         c2.metric("Multa",     f"R$ {fmt(df_emp['vlr_multa'].sum())}")
         c3.metric("Juros",     f"R$ {fmt(df_emp['vlr_juro_encargo'].sum())}")
         c4.metric("Outros",    f"R$ {fmt(df_emp['vlr_outra_entidade'].sum())}")
         c5.metric("Registros", str(len(df_emp)))
- 
+
         st.markdown('<div class="sec-head">Registros de Pagamento</div>', unsafe_allow_html=True)
- 
+
         col_s, col_dl = st.columns([4, 1])
         with col_s:
             busca_a = st.text_input(
@@ -752,17 +798,17 @@ with abas[1]:
                 placeholder="🔍  Código, data, tipo de imposto...",
                 key="busca_analitico"
             )
- 
+
         cols_exib = ["dat_pagamento", "cod_pagamento", "Imposto"] + valores
         df_det = df_emp[cols_exib].copy()
         df_det["dat_pagamento"] = df_det["dat_pagamento"].dt.strftime("%d/%m/%Y")
- 
+
         if busca_a.strip():
             mask = df_det.apply(
                 lambda row: busca_a.strip().upper() in " ".join(row.astype(str).str.upper()), axis=1
             )
             df_det = df_det[mask]
- 
+
         with col_dl:
             st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
             export_det = df_emp[cols_exib].copy()
@@ -774,7 +820,7 @@ with abas[1]:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="dl_analitico"
             )
- 
+
         if df_det.empty:
             st.markdown(
                 '<div class="info-box"><p>Nenhum registro encontrado para o filtro informado.</p></div>',
@@ -791,17 +837,19 @@ with abas[1]:
                 use_container_width=True,
                 hide_index=True,
             )
- 
+
 # ─── CONSOLIDADO ──────────────────────────────────────
-with abas[2]:
-    st.markdown('<div class="sec-head">Resumo do Período</div>', unsafe_allow_html=True)
- 
+def render_bloco_consolidado(df_base: pd.DataFrame, chave_export: str):
+    """Renderiza o resumo padrão (KPIs + por empresa + por imposto) para um
+    subconjunto qualquer do dataframe. Reutilizado na Visão Geral e em cada
+    consolidado por grupo."""
+
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Principal", f"R$ {fmt(df_tri['vlr_principal'].sum())}")
-    c2.metric("Multa",     f"R$ {fmt(df_tri['vlr_multa'].sum())}")
-    c3.metric("Juros",     f"R$ {fmt(df_tri['vlr_juro_encargo'].sum())}")
-    c4.metric("Total",     f"R$ {fmt(df_tri['vlr_total'].sum())}")
- 
+    c1.metric("Principal", f"R$ {fmt(df_base['vlr_principal'].sum())}")
+    c2.metric("Multa",     f"R$ {fmt(df_base['vlr_multa'].sum())}")
+    c3.metric("Juros",     f"R$ {fmt(df_base['vlr_juro_encargo'].sum())}")
+    c4.metric("Total",     f"R$ {fmt(df_base['vlr_total'].sum())}")
+
     # ── Por Empresa ──
     st.markdown('<div class="sec-head">Por Empresa</div>', unsafe_allow_html=True)
     col_s2, col_dl2 = st.columns([4, 1])
@@ -809,28 +857,28 @@ with abas[2]:
         busca_c = st.text_input(
             "Filtrar empresas",
             placeholder="🔍  Nome ou código...",
-            key="busca_consol"
+            key=f"busca_{chave_export}"
         )
- 
+
     consol = (
-        df_tri.groupby("cf_empresa")[valores]
+        df_base.groupby("cf_empresa")[valores]
         .sum().reset_index().sort_values("vlr_total", ascending=False)
     )
     if busca_c.strip():
         consol = consol[
             consol["cf_empresa"].astype(str).str.upper().str.contains(busca_c.strip().upper())
         ]
- 
+
     with col_dl2:
         st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
         st.download_button(
             "⬇  Exportar (.xlsx)",
             data=exportar_excel(consol, "Por Empresa"),
-            file_name=f"consolidado_empresa_{ano}_Q{tri}.xlsx",
+            file_name=f"{chave_export}_empresa_{ano}_Q{tri}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="dl_consol_emp"
+            key=f"dl_{chave_export}_emp"
         )
- 
+
     if consol.empty:
         st.markdown(
             '<div class="info-box"><p>Sem dados para o filtro atual.</p></div>',
@@ -841,21 +889,66 @@ with abas[2]:
             consol.style.format({v: "R$ {:,.2f}" for v in valores}),
             use_container_width=True, hide_index=True,
         )
- 
+
     # ── Por Imposto ──
     st.markdown('<div class="sec-head">Por Imposto</div>', unsafe_allow_html=True)
-    por_imp = df_tri.groupby("Imposto")[valores].sum().reset_index()
- 
+    por_imp = df_base.groupby("Imposto")[valores].sum().reset_index()
+
     col_ti, col_dl3 = st.columns([4, 1])
     with col_dl3:
         st.download_button(
             "⬇  Exportar (.xlsx)",
             data=exportar_excel(por_imp, "Por Imposto"),
-            file_name=f"consolidado_imposto_{ano}_Q{tri}.xlsx",
+            file_name=f"{chave_export}_imposto_{ano}_Q{tri}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="dl_consol_imp"
+            key=f"dl_{chave_export}_imp"
         )
     st.dataframe(
         por_imp.style.format({v: "R$ {:,.2f}" for v in valores}),
         use_container_width=True, hide_index=True,
     )
+
+
+with abas[2]:
+    nomes_subabas = ["  🗂 Visão Geral  "] + [f"  {nome}  " for nome in CONSOLIDADOS.keys()]
+    subabas = st.tabs(nomes_subabas)
+
+    # Visão Geral — comportamento antigo, com todas as empresas do período
+    with subabas[0]:
+        st.markdown('<div class="sec-head">Resumo do Período</div>', unsafe_allow_html=True)
+        render_bloco_consolidado(df_tri, "consolidado_geral")
+
+    # Um sub-tab por grupo, conforme CONSOLIDADOS
+    for i, (nome_grupo, lista_empresas) in enumerate(CONSOLIDADOS.items(), start=1):
+        with subabas[i]:
+            st.markdown(f'<div class="sec-head">Consolidado {esc(nome_grupo)}</div>', unsafe_allow_html=True)
+
+            if not lista_empresas:
+                st.markdown(f"""
+                <div class="info-box">
+                    <div class="ico">🏗️</div>
+                    <p>Nenhuma empresa configurada ainda para o consolidado <strong>{esc(nome_grupo)}</strong>.<br>
+                    Assim que a lista de empresas for definida no dicionário <code>CONSOLIDADOS</code>, esta aba será preenchida automaticamente.</p>
+                </div>""", unsafe_allow_html=True)
+                continue
+
+            df_grupo = df_tri[df_tri["cf_empresa"].isin(lista_empresas)]
+
+            encontradas = df_grupo["cf_empresa"].nunique()
+            esperadas   = len(set(lista_empresas))
+            if encontradas < esperadas:
+                nao_encontradas = sorted(set(lista_empresas) - set(df_grupo["cf_empresa"].unique()))
+                st.info(
+                    f"{encontradas} de {esperadas} empresa(s) do grupo têm pagamentos neste período. "
+                    f"Sem movimento ou nome divergente: {', '.join(nao_encontradas[:10])}"
+                    + ("..." if len(nao_encontradas) > 10 else ""),
+                    icon="ℹ️"
+                )
+
+            if df_grupo.empty:
+                st.markdown(
+                    '<div class="info-box"><p>Nenhum pagamento encontrado para este grupo no período selecionado.</p></div>',
+                    unsafe_allow_html=True
+                )
+            else:
+                render_bloco_consolidado(df_grupo, f"consolidado_{nome_grupo.lower().replace(' ', '_')}")
