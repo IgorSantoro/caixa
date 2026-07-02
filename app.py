@@ -120,6 +120,15 @@ CONSOLIDADOS = {
     ],
 }
 
+# ESA consolida TODAS as empresas de TODOS os outros consolidados.
+# Montada automaticamente a partir das listas acima — se você adicionar,
+# remover ou editar uma empresa em qualquer grupo, a ESA acompanha sozinha.
+CONSOLIDADOS["ESA"] = sorted({
+    empresa
+    for grupo, lista in CONSOLIDADOS.items()
+    for empresa in lista
+})
+
 # =============================
 # CSS
 # =============================
@@ -1016,10 +1025,26 @@ with abas[2]:
     nomes_subabas = ["  🗂 Visão Geral  "] + [f"  {nome}  " for nome in CONSOLIDADOS.keys()]
     subabas = st.tabs(nomes_subabas)
 
-    # Visão Geral — comportamento antigo, com todas as empresas do período
+    # Visão Geral — soma apenas as empresas que pertencem a algum consolidado
+    # (união de todos os grupos, pelo código numérico), não a base inteira.
     with subabas[0]:
-        st.markdown('<div class="sec-head">Resumo do Período</div>', unsafe_allow_html=True)
-        render_bloco_consolidado(df_tri, "consolidado_geral")
+        st.markdown('<div class="sec-head">Resumo do Período — Todas as Empresas dos Consolidados</div>', unsafe_allow_html=True)
+
+        codigos_todos = sorted({
+            c
+            for lista in CONSOLIDADOS.values()
+            for c in (extrair_codigo(e) for e in lista)
+            if c is not None
+        })
+        df_visao_geral = df_tri[df_tri["cod_empresa"].isin(codigos_todos)]
+
+        if df_visao_geral.empty:
+            st.markdown(
+                '<div class="info-box"><p>Nenhuma empresa consolidada teve pagamentos neste período.</p></div>',
+                unsafe_allow_html=True
+            )
+        else:
+            render_bloco_consolidado(df_visao_geral, "consolidado_geral")
 
     # Um sub-tab por grupo, conforme CONSOLIDADOS
     for i, (nome_grupo, lista_empresas) in enumerate(CONSOLIDADOS.items(), start=1):
