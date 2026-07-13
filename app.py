@@ -526,23 +526,73 @@ def exportar_excel(dataframe: pd.DataFrame, nome_aba: str = "Dados") -> bytes:
 
 
 # =============================
-# DADOS
+# DADOS  —  UM ARQUIVO POR TRIMESTRE
 # =============================
-CAMINHO_BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "base.xls")
+# base1 -> 1º trimestre, base2 -> 2º, base3 -> 3º, base4 -> 4º.
+#
+# IMPORTANTE: aqui o TRIMESTRE é definido pelo ARQUIVO, e não pela data de
+# pagamento. No IRPJ/CSLL trimestral o recolhimento normalmente cai no
+# trimestre seguinte ao da apuração (a apuração do 1º tri é paga em abril,
+# que já é o 2º tri). Se o trimestre saísse da data, o pagamento apareceria
+# no período errado. Por isso quem manda é o arquivo.
+#
+# Basta subir para o mesmo diretório do app: base1.xls, base2.xls, etc.
+# (também aceita .xlsx). Suba só os trimestres que já existirem — o painel
+# se ajusta sozinho aos trimestres presentes.
+DIR_BASE = os.path.dirname(os.path.abspath(__file__))
+
+ARQUIVOS_TRIMESTRE = {
+    1: ["base1.xls", "base1.xlsx"],
+    2: ["base2.xls", "base2.xlsx"],
+    3: ["base3.xls", "base3.xlsx"],
+    4: ["base4.xls", "base4.xlsx"],
+}
 
 
 @st.cache_data
 def carregar_dados(caminho: str, mtime: float):
-    """mtime é usado só como parte da chave de cache: se o arquivo mudar
-    no disco, o Streamlit percebe e recarrega automaticamente."""
+    """mtime entra como parte da chave de cache: se o arquivo mudar no disco,
+    o Streamlit percebe e recarrega automaticamente."""
     return pd.read_excel(caminho)
 
 
-if not os.path.exists(CAMINHO_BASE):
-    st.error(f"Arquivo base.xls não encontrado em: {CAMINHO_BASE}")
-    st.stop()
+def _localizar(candidatos):
+    """Retorna o primeiro caminho existente dentre os nomes candidatos."""
+    for nome in candidatos:
+        caminho = os.path.join(DIR_BASE, nome)
+        if os.path.exists(caminho):
+            return caminho
+    return None
 
-df = carregar_dados(CAMINHO_BASE, os.path.getmtime(CAMINHO_BASE))
+
+frames = []
+tris_no_sistema = []   # trimestres que têm arquivo carregado (1..4)
+
+for _tri, _cands in ARQUIVOS_TRIMESTRE.items():
+    _caminho = _localizar(_cands)
+    if _caminho:
+        _parcial = carregar_dados(_caminho, os.path.getmtime(_caminho)).copy()
+        _parcial["__tri_arquivo"] = _tri
+        frames.append(_parcial)
+        tris_no_sistema.append(_tri)
+
+MODO_POR_ARQUIVO = len(frames) > 0
+
+if MODO_POR_ARQUIVO:
+    df = pd.concat(frames, ignore_index=True)
+else:
+    # Compatibilidade: se nenhum base1..base4 existir, usa o base.xls antigo
+    # e, nesse caso, o trimestre volta a ser derivado da data de pagamento.
+    _legado = _localizar(["base.xls", "base.xlsx"])
+    if not _legado:
+        st.error(
+            "Nenhum arquivo de base encontrado. Suba ao menos um de "
+            "base1.xls … base4.xls (ou o base.xls antigo) na mesma pasta do app."
+        )
+        st.stop()
+    df = carregar_dados(_legado, os.path.getmtime(_legado)).copy()
+    df["__tri_arquivo"] = pd.NA
+
 df = df[df["dsc_situacao"].astype(str).str.upper().str.strip() != "CANCELADA"]
 
 colunas = [
@@ -575,13 +625,23 @@ df["dat_pagamento"] = pd.to_datetime(df["dat_pagamento"], dayfirst=True, errors=
 df = df.dropna(subset=["dat_pagamento"])
 n_descartados = n_antes - len(df)
 
-df["Ano"]       = df["dat_pagamento"].dt.year
-df["Trimestre"] = df["dat_pagamento"].dt.quarter
-df["Imposto"]   = df["cod_pagamento"].map(MAPA_IMPOSTO)
+df["Ano"] = df["dat_pagamento"].dt.year
+
+# Trimestre: no modo por arquivo, quem manda é o arquivo (base1->Q1, ...).
+# No modo compatibilidade (base.xls antigo), deriva da data como antes.
+if MODO_POR_ARQUIVO:
+    df["Trimestre"] = df["__tri_arquivo"].astype("Int64")
+else:
+    df["Trimestre"] = df["dat_pagamento"].dt.quarter
+
+df["Imposto"] = df["cod_pagamento"].map(MAPA_IMPOSTO)
 
 if df.empty:
     st.error("Sem dados após tratamento.")
     st.stop()
+
+# Trimestres realmente presentes (após todos os filtros)
+tris_disponiveis = sorted(int(t) for t in df["Trimestre"].dropna().unique())
 
 # =============================
 # SIDEBAR — só período
@@ -604,7 +664,7 @@ with st.sidebar:
     st.markdown("<hr class='sdiv'>", unsafe_allow_html=True)
     st.markdown('<span class="slabel">Trimestre</span>', unsafe_allow_html=True)
     tri = st.selectbox(
-        "Trimestre", [1, 2, 3, 4],
+        "Trimestre", tris_disponiveis,
         format_func=lambda x: f"Q{x} — {['Jan–Mar','Abr–Jun','Jul–Set','Out–Dez'][x-1]}",
         label_visibility="collapsed"
     )
@@ -631,10 +691,33 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
+    # indicador de quais arquivos/trimestres foram carregados — ajuda a
+    # conferir se o upload no GitHub funcionou.
+    if MODO_POR_ARQUIVO:
+        carregados_txt = ", ".join(f"Q{t}" for t in sorted(tris_no_sistema))
+        faltando_txt   = ", ".join(f"Q{t}" for t in (1, 2, 3, 4) if t not in tris_no_sistema)
+        st.markdown(f"""
+        <div style="padding:0.25rem 0 0.5rem;">
+            <div class="slabel" style="margin-bottom:6px;">Arquivos no Sistema</div>
+            <div style="font-size:0.62rem;color:#34C77B;">Carregados: {carregados_txt or '—'}</div>
+            <div style="font-size:0.62rem;color:#3A4A60;margin-top:2px;">Ausentes: {faltando_txt or 'nenhum'}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div style="padding:0.25rem 0 0.5rem;">
+            <div class="slabel" style="margin-bottom:6px;">Fonte</div>
+            <div style="font-size:0.62rem;color:#F0A429;">base.xls (modo compatibilidade — trimestre pela data)</div>
+        </div>
+        """, unsafe_allow_html=True)
+
 # =============================
 # FILTRO POR PERÍODO
 # =============================
 df_tri = df[(df["Ano"] == ano) & (df["Trimestre"] == tri)].copy()
+
+# Base do ACUMULADO: todos os trimestres do ano selecionado (ignora o Trimestre).
+df_ano = df[df["Ano"] == ano].copy()
 
 # Se a empresa selecionada no Dashboard não existir mais neste período, limpa a seleção
 if st.session_state.empresa and st.session_state.empresa not in df_tri["cf_empresa"].unique():
@@ -951,10 +1034,16 @@ with abas[1]:
             )
 
 # ─── CONSOLIDADO ──────────────────────────────────────
-def render_bloco_consolidado(df_base: pd.DataFrame, chave_export: str):
+def render_bloco_consolidado(df_base: pd.DataFrame, chave_export: str, sufixo_arquivo: str = None):
     """Renderiza o resumo padrão (KPIs + por empresa + por imposto) para um
-    subconjunto qualquer do dataframe. Reutilizado na Visão Geral e em cada
-    consolidado por grupo."""
+    subconjunto qualquer do dataframe. Reutilizado na Visão Geral, no Acumulado
+    e em cada consolidado por grupo.
+
+    sufixo_arquivo controla o nome dos arquivos exportados; se None, usa o
+    período selecionado (ano_Qtri). No Acumulado passamos 'ano_acumulado'."""
+
+    if sufixo_arquivo is None:
+        sufixo_arquivo = f"{ano}_Q{tri}"
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Principal", f"R$ {fmt(df_base['vlr_principal'].sum())}")
@@ -986,7 +1075,7 @@ def render_bloco_consolidado(df_base: pd.DataFrame, chave_export: str):
         st.download_button(
             "⬇  Exportar (.xlsx)",
             data=exportar_excel(consol, "Por Empresa"),
-            file_name=f"{chave_export}_empresa_{ano}_Q{tri}.xlsx",
+            file_name=f"{chave_export}_empresa_{sufixo_arquivo}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key=f"dl_{chave_export}_emp"
         )
@@ -1011,7 +1100,7 @@ def render_bloco_consolidado(df_base: pd.DataFrame, chave_export: str):
         st.download_button(
             "⬇  Exportar (.xlsx)",
             data=exportar_excel(por_imp, "Por Imposto"),
-            file_name=f"{chave_export}_imposto_{ano}_Q{tri}.xlsx",
+            file_name=f"{chave_export}_imposto_{sufixo_arquivo}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key=f"dl_{chave_export}_imp"
         )
@@ -1022,11 +1111,15 @@ def render_bloco_consolidado(df_base: pd.DataFrame, chave_export: str):
 
 
 with abas[2]:
-    nomes_subabas = ["  🗂 Visão Geral  "] + [f"  {nome}  " for nome in CONSOLIDADOS.keys()]
+    nomes_subabas = (
+        ["  🗂 Visão Geral  ", "  Σ Acumulado  "]
+        + [f"  {nome}  " for nome in CONSOLIDADOS.keys()]
+    )
     subabas = st.tabs(nomes_subabas)
 
-    # Visão Geral — soma apenas as empresas que pertencem a algum consolidado
-    # (união de todos os grupos, pelo código numérico), não a base inteira.
+    # ── Visão Geral — trimestre selecionado, empresas dos consolidados ──
+    # Soma apenas as empresas que pertencem a algum consolidado (união de
+    # todos os grupos, pelo código numérico), não a base inteira.
     with subabas[0]:
         st.markdown('<div class="sec-head">Resumo do Período — Todas as Empresas dos Consolidados</div>', unsafe_allow_html=True)
 
@@ -1046,8 +1139,87 @@ with abas[2]:
         else:
             render_bloco_consolidado(df_visao_geral, "consolidado_geral")
 
-    # Um sub-tab por grupo, conforme CONSOLIDADOS
-    for i, (nome_grupo, lista_empresas) in enumerate(CONSOLIDADOS.items(), start=1):
+    # ── ACUMULADO — soma de TODOS os trimestres presentes no ano ──
+    with subabas[1]:
+        rotulos_tri = {1: "Q1", 2: "Q2", 3: "Q3", 4: "Q4"}
+        tris_ano = sorted(int(t) for t in df_ano["Trimestre"].dropna().unique())
+        lista_tri_txt = ", ".join(rotulos_tri.get(t, f"Q{t}") for t in tris_ano) or "—"
+
+        st.markdown(
+            f'<div class="sec-head">Acumulado {ano} — soma dos trimestres no sistema '
+            f'({lista_tri_txt})</div>',
+            unsafe_allow_html=True
+        )
+        st.caption(
+            "Esta aba independe do trimestre selecionado na barra lateral: "
+            "soma todos os trimestres já carregados do ano de referência."
+        )
+
+        # Universo consolidado = união de todos os códigos de todos os grupos
+        codigos_todos = sorted({
+            c
+            for lista in CONSOLIDADOS.values()
+            for c in (extrair_codigo(e) for e in lista)
+            if c is not None
+        })
+        df_acum = df_ano[df_ano["cod_empresa"].isin(codigos_todos)]
+
+        if df_acum.empty:
+            st.markdown(
+                '<div class="info-box"><p>Nenhuma empresa consolidada teve pagamentos nos trimestres carregados.</p></div>',
+                unsafe_allow_html=True
+            )
+        else:
+            # ── Acumulado por consolidado (grupo) ──
+            st.markdown('<div class="sec-head">Acumulado por Consolidado</div>', unsafe_allow_html=True)
+
+            linhas_grupo = []
+            for nome_grupo, lista_empresas in CONSOLIDADOS.items():
+                if nome_grupo == "ESA":
+                    continue  # ESA = união de todos; representada no total geral abaixo
+                cods = {c for c in (extrair_codigo(e) for e in lista_empresas) if c is not None}
+                sub = df_acum[df_acum["cod_empresa"].isin(cods)]
+                if sub.empty:
+                    continue
+                linhas_grupo.append({
+                    "Consolidado":      nome_grupo,
+                    "IRPJ":             sub.loc[sub["Imposto"] == "IRPJ", "vlr_total"].sum(),
+                    "CSLL":             sub.loc[sub["Imposto"] == "CSLL", "vlr_total"].sum(),
+                    "vlr_multa":        sub["vlr_multa"].sum(),
+                    "vlr_juro_encargo": sub["vlr_juro_encargo"].sum(),
+                    "vlr_total":        sub["vlr_total"].sum(),
+                })
+
+            if linhas_grupo:
+                df_grupos = pd.DataFrame(linhas_grupo).sort_values("vlr_total", ascending=False)
+                col_gi, col_gdl = st.columns([4, 1])
+                with col_gdl:
+                    st.download_button(
+                        "⬇  Exportar (.xlsx)",
+                        data=exportar_excel(df_grupos, "Acumulado grupos"),
+                        file_name=f"acumulado_grupos_{ano}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_acum_grupos"
+                    )
+                st.dataframe(
+                    df_grupos.style.format({
+                        c: "R$ {:,.2f}" for c in
+                        ["IRPJ", "CSLL", "vlr_multa", "vlr_juro_encargo", "vlr_total"]
+                    }),
+                    use_container_width=True, hide_index=True,
+                )
+                st.caption(
+                    "Algumas empresas pertencem a mais de um consolidado (ex.: código 126, "
+                    "em Geração e Sobradinho), então a soma dos grupos pode não bater com o "
+                    "Total Consolidado abaixo, que conta cada empresa uma única vez."
+                )
+
+            # ── Total consolidado acumulado (todas as empresas, sem dupla contagem) ──
+            st.markdown('<div class="sec-head">Total Consolidado Acumulado</div>', unsafe_allow_html=True)
+            render_bloco_consolidado(df_acum, "acumulado_total", sufixo_arquivo=f"{ano}_acumulado")
+
+    # ── Um sub-tab por grupo (trimestre selecionado), conforme CONSOLIDADOS ──
+    for i, (nome_grupo, lista_empresas) in enumerate(CONSOLIDADOS.items(), start=2):
         with subabas[i]:
             st.markdown(f'<div class="sec-head">Consolidado {esc(nome_grupo)}</div>', unsafe_allow_html=True)
 
