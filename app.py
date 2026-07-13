@@ -421,6 +421,35 @@ st.markdown("""
 .sum-card-val.green  { color: #34C77B; }
 .sum-card-val.purple { color: #9B6EF3; }
 
+/* ─── quarter cards (acumulado) ─── */
+.qgrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 10px; margin-bottom: 0.5rem;
+}
+.qcard {
+    background: #0C0F1A; border: 1px solid #1A2035; border-radius: 12px;
+    padding: 1rem 1.2rem; position: relative; overflow: hidden;
+    transition: border-color 0.18s, transform 0.18s;
+}
+.qcard::before {
+    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: linear-gradient(90deg, #3A8FF5, #9B6EF3);
+}
+.qcard:hover { border-color: #2A3555; transform: translateY(-2px); }
+.qcard-tag {
+    font-size: 0.62rem; font-weight: 700; color: #3A4A60;
+    text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;
+}
+.qcard-total {
+    font-size: 1.05rem; font-weight: 700; color: #E2E8F4;
+    font-family: 'IBM Plex Mono', monospace; letter-spacing: -0.5px;
+}
+.qcard-split {
+    font-size: 0.62rem; color: #6A7A95; margin-top: 6px;
+    font-family: 'IBM Plex Mono', monospace;
+}
+
 /* selectbox */
 .stSelectbox > div > div {
     background: #0C0F1A !important; border: 1px solid #1E2640 !important;
@@ -801,7 +830,7 @@ st.markdown(f"""
 # =============================
 # ABAS
 # =============================
-abas = st.tabs(["  📊 Dashboard  ", "  📑 Analítico  ", "  📈 Consolidado  "])
+abas = st.tabs(["  📊 Dashboard  ", "  📑 Analítico  ", "  📈 Consolidado  ", "  Σ Acumulado  "])
 
 # ─── DASHBOARD ────────────────────────────────────────
 with abas[0]:
@@ -1112,7 +1141,7 @@ def render_bloco_consolidado(df_base: pd.DataFrame, chave_export: str, sufixo_ar
 
 with abas[2]:
     nomes_subabas = (
-        ["  🗂 Visão Geral  ", "  Σ Acumulado  "]
+        ["  🗂 Visão Geral  "]
         + [f"  {nome}  " for nome in CONSOLIDADOS.keys()]
     )
     subabas = st.tabs(nomes_subabas)
@@ -1139,87 +1168,8 @@ with abas[2]:
         else:
             render_bloco_consolidado(df_visao_geral, "consolidado_geral")
 
-    # ── ACUMULADO — soma de TODOS os trimestres presentes no ano ──
-    with subabas[1]:
-        rotulos_tri = {1: "Q1", 2: "Q2", 3: "Q3", 4: "Q4"}
-        tris_ano = sorted(int(t) for t in df_ano["Trimestre"].dropna().unique())
-        lista_tri_txt = ", ".join(rotulos_tri.get(t, f"Q{t}") for t in tris_ano) or "—"
-
-        st.markdown(
-            f'<div class="sec-head">Acumulado {ano} — soma dos trimestres no sistema '
-            f'({lista_tri_txt})</div>',
-            unsafe_allow_html=True
-        )
-        st.caption(
-            "Esta aba independe do trimestre selecionado na barra lateral: "
-            "soma todos os trimestres já carregados do ano de referência."
-        )
-
-        # Universo consolidado = união de todos os códigos de todos os grupos
-        codigos_todos = sorted({
-            c
-            for lista in CONSOLIDADOS.values()
-            for c in (extrair_codigo(e) for e in lista)
-            if c is not None
-        })
-        df_acum = df_ano[df_ano["cod_empresa"].isin(codigos_todos)]
-
-        if df_acum.empty:
-            st.markdown(
-                '<div class="info-box"><p>Nenhuma empresa consolidada teve pagamentos nos trimestres carregados.</p></div>',
-                unsafe_allow_html=True
-            )
-        else:
-            # ── Acumulado por consolidado (grupo) ──
-            st.markdown('<div class="sec-head">Acumulado por Consolidado</div>', unsafe_allow_html=True)
-
-            linhas_grupo = []
-            for nome_grupo, lista_empresas in CONSOLIDADOS.items():
-                if nome_grupo == "ESA":
-                    continue  # ESA = união de todos; representada no total geral abaixo
-                cods = {c for c in (extrair_codigo(e) for e in lista_empresas) if c is not None}
-                sub = df_acum[df_acum["cod_empresa"].isin(cods)]
-                if sub.empty:
-                    continue
-                linhas_grupo.append({
-                    "Consolidado":      nome_grupo,
-                    "IRPJ":             sub.loc[sub["Imposto"] == "IRPJ", "vlr_total"].sum(),
-                    "CSLL":             sub.loc[sub["Imposto"] == "CSLL", "vlr_total"].sum(),
-                    "vlr_multa":        sub["vlr_multa"].sum(),
-                    "vlr_juro_encargo": sub["vlr_juro_encargo"].sum(),
-                    "vlr_total":        sub["vlr_total"].sum(),
-                })
-
-            if linhas_grupo:
-                df_grupos = pd.DataFrame(linhas_grupo).sort_values("vlr_total", ascending=False)
-                col_gi, col_gdl = st.columns([4, 1])
-                with col_gdl:
-                    st.download_button(
-                        "⬇  Exportar (.xlsx)",
-                        data=exportar_excel(df_grupos, "Acumulado grupos"),
-                        file_name=f"acumulado_grupos_{ano}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="dl_acum_grupos"
-                    )
-                st.dataframe(
-                    df_grupos.style.format({
-                        c: "R$ {:,.2f}" for c in
-                        ["IRPJ", "CSLL", "vlr_multa", "vlr_juro_encargo", "vlr_total"]
-                    }),
-                    use_container_width=True, hide_index=True,
-                )
-                st.caption(
-                    "Algumas empresas pertencem a mais de um consolidado (ex.: código 126, "
-                    "em Geração e Sobradinho), então a soma dos grupos pode não bater com o "
-                    "Total Consolidado abaixo, que conta cada empresa uma única vez."
-                )
-
-            # ── Total consolidado acumulado (todas as empresas, sem dupla contagem) ──
-            st.markdown('<div class="sec-head">Total Consolidado Acumulado</div>', unsafe_allow_html=True)
-            render_bloco_consolidado(df_acum, "acumulado_total", sufixo_arquivo=f"{ano}_acumulado")
-
     # ── Um sub-tab por grupo (trimestre selecionado), conforme CONSOLIDADOS ──
-    for i, (nome_grupo, lista_empresas) in enumerate(CONSOLIDADOS.items(), start=2):
+    for i, (nome_grupo, lista_empresas) in enumerate(CONSOLIDADOS.items(), start=1):
         with subabas[i]:
             st.markdown(f'<div class="sec-head">Consolidado {esc(nome_grupo)}</div>', unsafe_allow_html=True)
 
@@ -1266,3 +1216,208 @@ with abas[2]:
                 )
             else:
                 render_bloco_consolidado(df_grupo, f"consolidado_{nome_grupo.lower().replace(' ', '_')}")
+
+
+# ─── ACUMULADO ────────────────────────────────────────
+# Aba de topo, ao lado do Consolidado. Diferente do Consolidado (que agrupa
+# empresas por grupo e mostra o trimestre selecionado), esta aba é o
+# ACUMULADO DE TODAS AS EMPRESAS INDIVIDUAIS somando TODOS os trimestres já
+# carregados do ano de referência. Não depende do trimestre escolhido na
+# barra lateral.
+with abas[3]:
+    rotulos_tri = {1: "1º Tri", 2: "2º Tri", 3: "3º Tri", 4: "4º Tri"}
+    tris_ano = sorted(int(t) for t in df_ano["Trimestre"].dropna().unique())
+    lista_tri_txt = "  ·  ".join(rotulos_tri.get(t, f"Q{t}") for t in tris_ano) or "—"
+
+    # Cabeçalho próprio do acumulado
+    st.markdown(f"""
+    <div class="top-bar" style="margin-top:0.25rem;">
+        <div class="top-bar-left">
+            <div class="top-bar-icon">Σ</div>
+            <div>
+                <div class="top-bar-title">Acumulado do Exercício {ano}</div>
+                <div class="top-bar-sub">Todas as empresas &nbsp;·&nbsp; soma de todos os trimestres carregados no sistema</div>
+            </div>
+        </div>
+        <div class="top-bar-right">
+            <div class="top-bar-period">{lista_tri_txt}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if df_ano.empty:
+        st.markdown(
+            '<div class="info-box"><div class="ico">Σ</div>'
+            '<p>Nenhum pagamento encontrado no ano selecionado.</p></div>',
+            unsafe_allow_html=True
+        )
+    else:
+        # ── KPIs do acumulado ──
+        a_geral = df_ano["vlr_total"].sum()
+        a_irpj  = df_ano[df_ano["Imposto"] == "IRPJ"]["vlr_total"].sum()
+        a_csll  = df_ano[df_ano["Imposto"] == "CSLL"]["vlr_total"].sum()
+        a_multa = df_ano["vlr_multa"].sum()
+        a_juros = df_ano["vlr_juro_encargo"].sum()
+        a_emp   = df_ano["cf_empresa"].nunique()
+
+        ap_irpj  = (a_irpj  / a_geral * 100) if a_geral > 0 else 0
+        ap_csll  = (a_csll  / a_geral * 100) if a_geral > 0 else 0
+        ap_multa = (a_multa / a_geral * 100) if a_geral > 0 else 0
+
+        st.markdown(f"""
+        <div class="kpi-row">
+            <div class="kpi blue">
+                <div class="kpi-icon">💰</div>
+                <div class="kpi-label">Total Acumulado</div>
+                <div class="kpi-val blue">R$ {fmt(a_geral)}</div>
+                <div class="kpi-sub">{len(tris_ano)} trimestre(s)</div>
+            </div>
+            <div class="kpi green">
+                <div class="kpi-icon">🟩</div>
+                <div class="kpi-label">IRPJ</div>
+                <div class="kpi-val green">R$ {fmt(a_irpj)}</div>
+                <div class="kpi-sub">{ap_irpj:.1f}% do total</div>
+            </div>
+            <div class="kpi purple">
+                <div class="kpi-icon">🟪</div>
+                <div class="kpi-label">CSLL</div>
+                <div class="kpi-val purple">R$ {fmt(a_csll)}</div>
+                <div class="kpi-sub">{ap_csll:.1f}% do total</div>
+            </div>
+            <div class="kpi amber">
+                <div class="kpi-icon">⚠️</div>
+                <div class="kpi-label">Multas</div>
+                <div class="kpi-val amber">R$ {fmt(a_multa)}</div>
+                <div class="kpi-sub">{ap_multa:.1f}% do total</div>
+            </div>
+            <div class="kpi red">
+                <div class="kpi-icon">📈</div>
+                <div class="kpi-label">Juros & Encargos</div>
+                <div class="kpi-val red">R$ {fmt(a_juros)}</div>
+                <div class="kpi-sub">acréscimos legais</div>
+            </div>
+            <div class="kpi teal">
+                <div class="kpi-icon">🏢</div>
+                <div class="kpi-label">Empresas</div>
+                <div class="kpi-val teal">{a_emp}</div>
+                <div class="kpi-sub">no acumulado</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ── Evolução por trimestre (um card por trimestre carregado) ──
+        st.markdown('<div class="sec-head">Evolução por Trimestre</div>', unsafe_allow_html=True)
+        cards_tri = ""
+        for t in tris_ano:
+            sub = df_ano[df_ano["Trimestre"] == t]
+            tot = sub["vlr_total"].sum()
+            ir  = sub[sub["Imposto"] == "IRPJ"]["vlr_total"].sum()
+            cs  = sub[sub["Imposto"] == "CSLL"]["vlr_total"].sum()
+            cards_tri += f"""
+            <div class="qcard">
+                <div class="qcard-tag">{rotulos_tri.get(t, f'Q{t}')} · {ano}</div>
+                <div class="qcard-total">R$ {fmt(tot)}</div>
+                <div class="qcard-split">IRPJ {fmt(ir)} &nbsp;·&nbsp; CSLL {fmt(cs)}</div>
+            </div>"""
+        st.markdown(f'<div class="qgrid">{cards_tri}</div>', unsafe_allow_html=True)
+
+        # ── Por empresa (tabela estilizada, ordenada pelo total acumulado) ──
+        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+        col_sa, col_ea = st.columns([4, 1])
+        with col_sa:
+            busca_ac = st.text_input(
+                "Pesquisar empresa",
+                placeholder="🔍  Nome, código ou parte do nome...",
+                key="busca_acum"
+            )
+        with col_ea:
+            export_ac = (
+                df_ano.groupby("cf_empresa")[valores]
+                .sum().reset_index().sort_values("vlr_total", ascending=False)
+            )
+            st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
+            st.download_button(
+                "⬇  Exportar (.xlsx)",
+                data=exportar_excel(export_ac, "Acumulado"),
+                file_name=f"acumulado_{ano}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_acum_emp"
+            )
+
+        rank_ac = (
+            df_ano.groupby("cf_empresa")["vlr_total"]
+            .sum().sort_values(ascending=False)
+        )
+        if busca_ac.strip():
+            rank_ac = rank_ac[rank_ac.index.astype(str).str.upper().str.contains(busca_ac.strip().upper())]
+
+        hc2, rc2 = st.columns([6, 1])
+        with hc2:
+            st.markdown('<div class="sec-head">Por Empresa — Acumulado</div>', unsafe_allow_html=True)
+        with rc2:
+            st.markdown(
+                f"<div style='padding-top:1.6rem;text-align:right'>"
+                f"<span class='result-count'>{len(rank_ac)} empresa{'s' if len(rank_ac) != 1 else ''}</span>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+
+        if rank_ac.empty:
+            msg = f'para <strong>"{esc(busca_ac)}"</strong>' if busca_ac.strip() else "neste acumulado"
+            st.markdown(f"""
+            <div class="info-box">
+                <div class="ico">🔍</div>
+                <p>Nenhuma empresa encontrada {msg}.</p>
+            </div>""", unsafe_allow_html=True)
+        else:
+            max_ac     = rank_ac.max()
+            agg_imp_ac = df_ano.groupby(["cf_empresa", "Imposto"])["vlr_total"].sum().unstack(fill_value=0)
+            agg_ext_ac = df_ano.groupby("cf_empresa")[["vlr_multa", "vlr_juro_encargo"]].sum()
+
+            rows_ac = ""
+            for emp, total in rank_ac.items():
+                irpj  = agg_imp_ac.loc[emp, "IRPJ"] if emp in agg_imp_ac.index and "IRPJ" in agg_imp_ac.columns else 0
+                csll  = agg_imp_ac.loc[emp, "CSLL"] if emp in agg_imp_ac.index and "CSLL" in agg_imp_ac.columns else 0
+                multa = agg_ext_ac.loc[emp, "vlr_multa"] if emp in agg_ext_ac.index else 0
+                juros = agg_ext_ac.loc[emp, "vlr_juro_encargo"] if emp in agg_ext_ac.index else 0
+                pct   = (total / max_ac * 100) if max_ac > 0 else 0
+                share = (total / a_geral * 100) if a_geral > 0 else 0
+
+                share_class = "share-high" if share >= 20 else ("share-mid" if share >= 8 else "share-low")
+                bar_color   = "#3A8FF5" if irpj >= csll else "#9B6EF3"
+
+                pill_i = '<span class="pill pill-irpj">IRPJ</span>' if irpj > 0 else ""
+                pill_c = '<span class="pill pill-csll">CSLL</span>' if csll > 0 else ""
+
+                rows_ac += f"""
+                <tr>
+                    <td class="emp-name">
+                        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px;">
+                            <span>{esc(emp)}{pill_i}{pill_c}</span>
+                            <span class="share-badge {share_class}">{share:.1f}%</span>
+                        </div>
+                        <div class="bar-wrap">
+                            <div class="bar-fill" style="width:{pct:.1f}%;background:linear-gradient(90deg,{bar_color},{bar_color}66);"></div>
+                        </div>
+                    </td>
+                    <td class="num">R$ {fmt(irpj)}</td>
+                    <td class="num">R$ {fmt(csll)}</td>
+                    <td class="num">R$ {fmt(multa)}</td>
+                    <td class="num">R$ {fmt(juros)}</td>
+                    <td class="total-num">R$ {fmt(total)}</td>
+                </tr>"""
+
+            st.markdown(f"""
+            <div style="background:#0A0D18;border:1px solid #1A2035;border-radius:12px;overflow:hidden;">
+            <table class="ctable">
+                <thead><tr>
+                    <th>Empresa &nbsp;<span style="opacity:.35;font-weight:400;font-size:0.6rem;">% participação</span></th>
+                    <th class="num">IRPJ</th>
+                    <th class="num">CSLL</th>
+                    <th class="num">Multas</th>
+                    <th class="num">Juros</th>
+                    <th class="num">Total</th>
+                </tr></thead>
+                <tbody>{rows_ac}</tbody>
+            </table>
+            </div>""", unsafe_allow_html=True)
