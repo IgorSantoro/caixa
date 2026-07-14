@@ -485,6 +485,16 @@ def fmt(valor):
     return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def _fmt_moeda_col(x):
+    """Formata número no padrão brasileiro para uso em .style.format de
+    dataframes: 33086076.67 -> 'R$ 33.086.076,67'. Substitui o antigo
+    'R$ {:,.2f}', que saía no padrão americano (vírgula no milhar)."""
+    try:
+        return f"R$ {fmt(float(x))}"
+    except Exception:
+        return x
+
+
 def esc(texto):
     """Escapa texto vindo do usuário ou da planilha antes de injetar em HTML."""
     return html.escape(str(texto))
@@ -1057,7 +1067,7 @@ with abas[1]:
                 unsafe_allow_html=True
             )
             st.dataframe(
-                df_det.style.format({v: "R$ {:,.2f}" for v in valores}),
+                df_det.style.format({v: _fmt_moeda_col for v in valores}),
                 use_container_width=True,
                 hide_index=True,
             )
@@ -1074,13 +1084,60 @@ def render_bloco_consolidado(df_base: pd.DataFrame, chave_export: str, sufixo_ar
     if sufixo_arquivo is None:
         sufixo_arquivo = f"{ano}_Q{tri}"
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Principal", f"R$ {fmt(df_base['vlr_principal'].sum())}")
-    c2.metric("Multa",     f"R$ {fmt(df_base['vlr_multa'].sum())}")
-    c3.metric("Juros",     f"R$ {fmt(df_base['vlr_juro_encargo'].sum())}")
-    c4.metric("Total",     f"R$ {fmt(df_base['vlr_total'].sum())}")
+    # ── KPIs do bloco (visão clara do total do consolidado) ──
+    b_geral = df_base["vlr_total"].sum()
+    b_irpj  = df_base[df_base["Imposto"] == "IRPJ"]["vlr_total"].sum()
+    b_csll  = df_base[df_base["Imposto"] == "CSLL"]["vlr_total"].sum()
+    b_multa = df_base["vlr_multa"].sum()
+    b_juros = df_base["vlr_juro_encargo"].sum()
+    b_emp   = df_base["cf_empresa"].nunique()
 
-    # ── Por Empresa ──
+    bp_irpj  = (b_irpj  / b_geral * 100) if b_geral > 0 else 0
+    bp_csll  = (b_csll  / b_geral * 100) if b_geral > 0 else 0
+    bp_multa = (b_multa / b_geral * 100) if b_geral > 0 else 0
+
+    st.markdown(f"""
+    <div class="kpi-row">
+        <div class="kpi blue">
+            <div class="kpi-icon">💰</div>
+            <div class="kpi-label">Total do Consolidado</div>
+            <div class="kpi-val blue">R$ {fmt(b_geral)}</div>
+            <div class="kpi-sub">100% do bloco</div>
+        </div>
+        <div class="kpi green">
+            <div class="kpi-icon">🟩</div>
+            <div class="kpi-label">IRPJ</div>
+            <div class="kpi-val green">R$ {fmt(b_irpj)}</div>
+            <div class="kpi-sub">{bp_irpj:.1f}% do total</div>
+        </div>
+        <div class="kpi purple">
+            <div class="kpi-icon">🟪</div>
+            <div class="kpi-label">CSLL</div>
+            <div class="kpi-val purple">R$ {fmt(b_csll)}</div>
+            <div class="kpi-sub">{bp_csll:.1f}% do total</div>
+        </div>
+        <div class="kpi amber">
+            <div class="kpi-icon">⚠️</div>
+            <div class="kpi-label">Multas</div>
+            <div class="kpi-val amber">R$ {fmt(b_multa)}</div>
+            <div class="kpi-sub">{bp_multa:.1f}% do total</div>
+        </div>
+        <div class="kpi red">
+            <div class="kpi-icon">📈</div>
+            <div class="kpi-label">Juros & Encargos</div>
+            <div class="kpi-val red">R$ {fmt(b_juros)}</div>
+            <div class="kpi-sub">acréscimos legais</div>
+        </div>
+        <div class="kpi teal">
+            <div class="kpi-icon">🏢</div>
+            <div class="kpi-label">Empresas</div>
+            <div class="kpi-val teal">{b_emp}</div>
+            <div class="kpi-sub">com movimento</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Por Empresa (tabela estilizada, padrão do Dashboard) ──
     st.markdown('<div class="sec-head">Por Empresa</div>', unsafe_allow_html=True)
     col_s2, col_dl2 = st.columns([4, 1])
     with col_s2:
@@ -1090,14 +1147,11 @@ def render_bloco_consolidado(df_base: pd.DataFrame, chave_export: str, sufixo_ar
             key=f"busca_{chave_export}"
         )
 
+    # base completa (todas as colunas de valores) — usada na exportação
     consol = (
         df_base.groupby("cf_empresa")[valores]
         .sum().reset_index().sort_values("vlr_total", ascending=False)
     )
-    if busca_c.strip():
-        consol = consol[
-            consol["cf_empresa"].astype(str).str.upper().str.contains(busca_c.strip().upper())
-        ]
 
     with col_dl2:
         st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
@@ -1109,18 +1163,70 @@ def render_bloco_consolidado(df_base: pd.DataFrame, chave_export: str, sufixo_ar
             key=f"dl_{chave_export}_emp"
         )
 
-    if consol.empty:
+    # ranking + splits por imposto/encargos, pré-agregados uma vez
+    rank_c = df_base.groupby("cf_empresa")["vlr_total"].sum().sort_values(ascending=False)
+    if busca_c.strip():
+        rank_c = rank_c[rank_c.index.astype(str).str.upper().str.contains(busca_c.strip().upper())]
+
+    if rank_c.empty:
         st.markdown(
             '<div class="info-box"><p>Sem dados para o filtro atual.</p></div>',
             unsafe_allow_html=True
         )
     else:
-        st.dataframe(
-            consol.style.format({v: "R$ {:,.2f}" for v in valores}),
-            use_container_width=True, hide_index=True,
-        )
+        max_c   = rank_c.max()
+        agg_imp = df_base.groupby(["cf_empresa", "Imposto"])["vlr_total"].sum().unstack(fill_value=0)
+        agg_ext = df_base.groupby("cf_empresa")[["vlr_multa", "vlr_juro_encargo"]].sum()
 
-    # ── Por Imposto ──
+        rows_c = ""
+        for emp, total in rank_c.items():
+            irpj  = agg_imp.loc[emp, "IRPJ"] if emp in agg_imp.index and "IRPJ" in agg_imp.columns else 0
+            csll  = agg_imp.loc[emp, "CSLL"] if emp in agg_imp.index and "CSLL" in agg_imp.columns else 0
+            multa = agg_ext.loc[emp, "vlr_multa"] if emp in agg_ext.index else 0
+            juros = agg_ext.loc[emp, "vlr_juro_encargo"] if emp in agg_ext.index else 0
+            pct   = (total / max_c * 100) if max_c > 0 else 0
+            share = (total / b_geral * 100) if b_geral > 0 else 0
+
+            share_class = "share-high" if share >= 20 else ("share-mid" if share >= 8 else "share-low")
+            bar_color   = "#3A8FF5" if irpj >= csll else "#9B6EF3"
+
+            pill_i = '<span class="pill pill-irpj">IRPJ</span>' if irpj > 0 else ""
+            pill_c = '<span class="pill pill-csll">CSLL</span>' if csll > 0 else ""
+
+            rows_c += f"""
+            <tr>
+                <td class="emp-name">
+                    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px;">
+                        <span>{esc(emp)}{pill_i}{pill_c}</span>
+                        <span class="share-badge {share_class}">{share:.1f}%</span>
+                    </div>
+                    <div class="bar-wrap">
+                        <div class="bar-fill" style="width:{pct:.1f}%;background:linear-gradient(90deg,{bar_color},{bar_color}66);"></div>
+                    </div>
+                </td>
+                <td class="num">R$ {fmt(irpj)}</td>
+                <td class="num">R$ {fmt(csll)}</td>
+                <td class="num">R$ {fmt(multa)}</td>
+                <td class="num">R$ {fmt(juros)}</td>
+                <td class="total-num">R$ {fmt(total)}</td>
+            </tr>"""
+
+        st.markdown(f"""
+        <div style="background:#0A0D18;border:1px solid #1A2035;border-radius:12px;overflow:hidden;">
+        <table class="ctable">
+            <thead><tr>
+                <th>Empresa &nbsp;<span style="opacity:.35;font-weight:400;font-size:0.6rem;">% participação</span></th>
+                <th class="num">IRPJ</th>
+                <th class="num">CSLL</th>
+                <th class="num">Multas</th>
+                <th class="num">Juros</th>
+                <th class="num">Total</th>
+            </tr></thead>
+            <tbody>{rows_c}</tbody>
+        </table>
+        </div>""", unsafe_allow_html=True)
+
+    # ── Por Imposto (dataframe com formatação BR) ──
     st.markdown('<div class="sec-head">Por Imposto</div>', unsafe_allow_html=True)
     por_imp = df_base.groupby("Imposto")[valores].sum().reset_index()
 
@@ -1134,7 +1240,7 @@ def render_bloco_consolidado(df_base: pd.DataFrame, chave_export: str, sufixo_ar
             key=f"dl_{chave_export}_imp"
         )
     st.dataframe(
-        por_imp.style.format({v: "R$ {:,.2f}" for v in valores}),
+        por_imp.style.format({v: _fmt_moeda_col for v in valores}),
         use_container_width=True, hide_index=True,
     )
 
