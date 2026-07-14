@@ -1073,18 +1073,10 @@ with abas[1]:
             )
 
 # ─── CONSOLIDADO ──────────────────────────────────────
-def render_bloco_consolidado(df_base: pd.DataFrame, chave_export: str, sufixo_arquivo: str = None):
-    """Renderiza o resumo padrão (KPIs + por empresa + por imposto) para um
-    subconjunto qualquer do dataframe. Reutilizado na Visão Geral, no Acumulado
-    e em cada consolidado por grupo.
-
-    sufixo_arquivo controla o nome dos arquivos exportados; se None, usa o
-    período selecionado (ano_Qtri). No Acumulado passamos 'ano_acumulado'."""
-
-    if sufixo_arquivo is None:
-        sufixo_arquivo = f"{ano}_Q{tri}"
-
-    # ── KPIs do bloco (visão clara do total do consolidado) ──
+def _kpis_bloco(df_base: pd.DataFrame, label_total: str = "Total do Consolidado",
+                sub_total: str = "100% do bloco"):
+    """Linha de 6 KPIs (Total, IRPJ, CSLL, Multas, Juros, Empresas) no padrão
+    de moeda BR. Reutilizada no Consolidado (por grupo) e na Visão Geral."""
     b_geral = df_base["vlr_total"].sum()
     b_irpj  = df_base[df_base["Imposto"] == "IRPJ"]["vlr_total"].sum()
     b_csll  = df_base[df_base["Imposto"] == "CSLL"]["vlr_total"].sum()
@@ -1100,9 +1092,9 @@ def render_bloco_consolidado(df_base: pd.DataFrame, chave_export: str, sufixo_ar
     <div class="kpi-row">
         <div class="kpi blue">
             <div class="kpi-icon">💰</div>
-            <div class="kpi-label">Total do Consolidado</div>
+            <div class="kpi-label">{esc(label_total)}</div>
             <div class="kpi-val blue">R$ {fmt(b_geral)}</div>
-            <div class="kpi-sub">100% do bloco</div>
+            <div class="kpi-sub">{esc(sub_total)}</div>
         </div>
         <div class="kpi green">
             <div class="kpi-icon">🟩</div>
@@ -1136,6 +1128,22 @@ def render_bloco_consolidado(df_base: pd.DataFrame, chave_export: str, sufixo_ar
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+
+def render_bloco_consolidado(df_base: pd.DataFrame, chave_export: str, sufixo_arquivo: str = None):
+    """Renderiza o resumo padrão (KPIs + por empresa + por imposto) para um
+    subconjunto qualquer do dataframe. Reutilizado na Visão Geral, no Acumulado
+    e em cada consolidado por grupo.
+
+    sufixo_arquivo controla o nome dos arquivos exportados; se None, usa o
+    período selecionado (ano_Qtri). No Acumulado passamos 'ano_acumulado'."""
+
+    if sufixo_arquivo is None:
+        sufixo_arquivo = f"{ano}_Q{tri}"
+
+    # ── KPIs do bloco (visão clara do total do consolidado) ──
+    _kpis_bloco(df_base, "Total do Consolidado", "100% do bloco")
+    b_geral = df_base["vlr_total"].sum()   # usado no % de participação por empresa
 
     # ── Por Empresa (tabela estilizada, padrão do Dashboard) ──
     st.markdown('<div class="sec-head">Por Empresa</div>', unsafe_allow_html=True)
@@ -1252,12 +1260,16 @@ with abas[2]:
     )
     subabas = st.tabs(nomes_subabas)
 
-    # ── Visão Geral — trimestre selecionado, empresas dos consolidados ──
-    # Soma apenas as empresas que pertencem a algum consolidado (união de
-    # todos os grupos, pelo código numérico), não a base inteira.
+    # ── Visão Geral — um valor por CONSOLIDADO (trimestre selecionado) ──
+    # Aqui não listamos empresa por empresa: mostramos o resumo de TODOS os
+    # consolidados, cada grupo como uma linha com seus totais (IRPJ, CSLL,
+    # multas, juros e total). Os KPIs do topo trazem o total de todos os
+    # consolidados juntos, contando cada empresa uma única vez (união).
     with subabas[0]:
-        st.markdown('<div class="sec-head">Resumo do Período — Todas as Empresas dos Consolidados</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sec-head">Resumo do Período — Todos os Consolidados</div>', unsafe_allow_html=True)
 
+        # União (sem duplicidade) de todas as empresas que pertencem a algum
+        # consolidado — base dos KPIs e do % de participação de cada grupo.
         codigos_todos = sorted({
             c
             for lista in CONSOLIDADOS.values()
@@ -1272,7 +1284,104 @@ with abas[2]:
                 unsafe_allow_html=True
             )
         else:
-            render_bloco_consolidado(df_visao_geral, "consolidado_geral")
+            # KPIs: total de TODOS os consolidados juntos, sem dupla contagem.
+            _kpis_bloco(df_visao_geral, "Total dos Consolidados", "sem dupla contagem")
+            g_geral = df_visao_geral["vlr_total"].sum()
+
+            # Um resumo por grupo. A ESA fica de fora da lista por ser, por
+            # definição, a consolidação de todos os demais grupos (repetiria o
+            # total). Grupos sem empresas configuradas também são ignorados.
+            st.markdown('<div class="sec-head">Por Consolidado</div>', unsafe_allow_html=True)
+
+            resumo_grupos = []
+            for nome_grupo, lista in CONSOLIDADOS.items():
+                if nome_grupo == "ESA" or not lista:
+                    continue
+                codigos_g = {c for c in (extrair_codigo(e) for e in lista) if c is not None}
+                dfg = df_tri[df_tri["cod_empresa"].isin(codigos_g)]
+                resumo_grupos.append({
+                    "grupo": nome_grupo,
+                    "irpj":  dfg[dfg["Imposto"] == "IRPJ"]["vlr_total"].sum(),
+                    "csll":  dfg[dfg["Imposto"] == "CSLL"]["vlr_total"].sum(),
+                    "multa": dfg["vlr_multa"].sum(),
+                    "juros": dfg["vlr_juro_encargo"].sum(),
+                    "total": dfg["vlr_total"].sum(),
+                    "n_emp": dfg["cf_empresa"].nunique(),
+                })
+
+            resumo_grupos.sort(key=lambda r: r["total"], reverse=True)
+            max_g = max((r["total"] for r in resumo_grupos), default=0)
+
+            # Exportação: uma linha por consolidado.
+            _, col_dl_vg = st.columns([4, 1])
+            with col_dl_vg:
+                export_vg = pd.DataFrame([{
+                    "Consolidado":      r["grupo"],
+                    "Empresas":         r["n_emp"],
+                    "vlr_irpj":         r["irpj"],
+                    "vlr_csll":         r["csll"],
+                    "vlr_multa":        r["multa"],
+                    "vlr_juro_encargo": r["juros"],
+                    "vlr_total":        r["total"],
+                } for r in resumo_grupos])
+                st.download_button(
+                    "⬇  Exportar (.xlsx)",
+                    data=exportar_excel(export_vg, "Por Consolidado"),
+                    file_name=f"consolidados_resumo_{ano}_Q{tri}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_visao_geral_grupos"
+                )
+
+            rows_vg = ""
+            for r in resumo_grupos:
+                total = r["total"]
+                pct   = (total / max_g * 100) if max_g > 0 else 0
+                share = (total / g_geral * 100) if g_geral > 0 else 0
+                share_class = "share-high" if share >= 20 else ("share-mid" if share >= 8 else "share-low")
+                bar_color   = "#3A8FF5" if r["irpj"] >= r["csll"] else "#9B6EF3"
+
+                rows_vg += f"""
+                <tr>
+                    <td class="emp-name">
+                        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px;">
+                            <span>{esc(r['grupo'])}<span class="pill" style="background:#0F1830;color:#6A7A95;border:1px solid #1E2640;">{r['n_emp']} emp.</span></span>
+                            <span class="share-badge {share_class}">{share:.1f}%</span>
+                        </div>
+                        <div class="bar-wrap">
+                            <div class="bar-fill" style="width:{pct:.1f}%;background:linear-gradient(90deg,{bar_color},{bar_color}66);"></div>
+                        </div>
+                    </td>
+                    <td class="num">R$ {fmt(r['irpj'])}</td>
+                    <td class="num">R$ {fmt(r['csll'])}</td>
+                    <td class="num">R$ {fmt(r['multa'])}</td>
+                    <td class="num">R$ {fmt(r['juros'])}</td>
+                    <td class="total-num">R$ {fmt(total)}</td>
+                </tr>"""
+
+            st.markdown(f"""
+            <div style="background:#0A0D18;border:1px solid #1A2035;border-radius:12px;overflow:hidden;">
+            <table class="ctable">
+                <thead><tr>
+                    <th>Consolidado &nbsp;<span style="opacity:.35;font-weight:400;font-size:0.6rem;">% participação</span></th>
+                    <th class="num">IRPJ</th>
+                    <th class="num">CSLL</th>
+                    <th class="num">Multas</th>
+                    <th class="num">Juros</th>
+                    <th class="num">Total</th>
+                </tr></thead>
+                <tbody>{rows_vg}</tbody>
+            </table>
+            </div>""", unsafe_allow_html=True)
+
+            st.markdown(
+                "<div style='font-size:0.68rem;color:#3A4A60;margin-top:10px;line-height:1.5;'>"
+                "Algumas empresas participam de mais de um consolidado (ex.: o código 126 aparece "
+                "em Geração e em Sobradinho), então a soma das linhas pode ser maior que o total "
+                "dos cartões acima, que conta cada empresa uma única vez. O grupo ESA não é listado "
+                "por representar a consolidação de todos os demais."
+                "</div>",
+                unsafe_allow_html=True
+            )
 
     # ── Um sub-tab por grupo (trimestre selecionado), conforme CONSOLIDADOS ──
     for i, (nome_grupo, lista_empresas) in enumerate(CONSOLIDADOS.items(), start=1):
