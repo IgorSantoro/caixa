@@ -779,4 +779,4 @@ if pedido_detalhe:
     else:
         abrir_detalhe(pedido_detalhe, dados_empresa,
                       f"Pagamentos em {rotulo_periodo}",
-                      sufixo_arquivo, periodo == "Ano completo")m
+                      sufixo_arquivo, periodo == "Ano completo")
