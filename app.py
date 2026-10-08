@@ -263,6 +263,12 @@ def esc(t):
     return html.escape(str(t))
 
 
+def compactar(trecho):
+    """Junta o HTML numa linha só. Linha vazia ou recuo de 4+ espaços faz o
+    Markdown do Streamlit tratar o restante como bloco de código."""
+    return "".join(linha.strip() for linha in trecho.splitlines())
+
+
 def codigo_de(nome):
     """'126 - PARQUE EOLICO...' -> 126. Retorna None se não houver número."""
     m = re.match(r"\s*0*(\d+)", str(nome or ""))
@@ -339,7 +345,7 @@ def mostrar_cartoes(r, rotulo_total="Total pago", encargos=True):
     pct_irpj = r["irpj"] / r["total"] * 100 if r["total"] else 0
     pct_csll = r["csll"] / r["total"] * 100 if r["total"] else 0
 
-    st.markdown(f"""
+    st.markdown(compactar(f"""
     <div class="cards">
       <div class="card b"><div class="rot">{esc(rotulo_total)}</div>
         <div class="val">R$ {moeda(r['total'])}</div><div class="sub">IRPJ + CSLL</div></div>
@@ -349,7 +355,7 @@ def mostrar_cartoes(r, rotulo_total="Total pago", encargos=True):
         <div class="val">R$ {moeda(r['csll'])}</div><div class="sub">{pct_csll:.1f}% do total</div></div>
       <div class="card t"><div class="rot">Empresas</div>
         <div class="val">{r['empresas']}</div><div class="sub">com pagamento no período</div></div>
-    </div>""", unsafe_allow_html=True)
+    </div>"""), unsafe_allow_html=True)
 
     if not encargos:
         return
@@ -412,7 +418,7 @@ def mostrar_tabela(base, rotulo="Empresa", sufixos=None, contexto=None):
         </tr>"""
 
     coluna_acao = '<th class="acao">Ações</th>' if contexto else ""
-    st.markdown(f"""
+    tabela_html = f"""
     <div class="wrap"><table class="t">
       <thead><tr>
         <th>{esc(rotulo)} <span style="opacity:.4;font-weight:400;">· participação</span></th>
@@ -421,7 +427,11 @@ def mostrar_tabela(base, rotulo="Empresa", sufixos=None, contexto=None):
         {coluna_acao}
       </tr></thead>
       <tbody>{linhas}</tbody>
-    </table></div>""", unsafe_allow_html=True)
+    </table></div>"""
+
+    # Sem coluna Ações, {acao} e {coluna_acao} deixam linhas vazias que fariam
+    # o Markdown mostrar o HTML como código. Compactar resolve.
+    st.markdown(compactar(tabela_html), unsafe_allow_html=True)
 
 
 def botao_exportar(df, nome_arquivo, chave, aba="Dados"):
