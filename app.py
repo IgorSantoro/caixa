@@ -15,6 +15,12 @@ Suba só os trimestres que já existirem; o painel se ajusta sozinho.
 Também aceita .xlsx. O trimestre vem do ARQUIVO, não da data de pagamento —
 a apuração do 1º tri é recolhida em abril, que já é o 2º tri do calendário.
 
+Atualização automática
+----------------------
+O painel confere a data de modificação das bases a cada SEGUNDOS_VERIFICACAO
+segundos. Se algum arquivo foi salvo, entrou ou saiu da pasta, a página
+recarrega sozinha com os dados novos — sem F5 e sem limpar cache.
+
 Sobre o ícone de olho
 ---------------------
 A tabela é HTML, e HTML dentro do Streamlit não consegue chamar função Python
@@ -27,6 +33,8 @@ import html
 import io
 import os
 import re
+import time
+from datetime import datetime
 from urllib.parse import quote
 
 import pandas as pd
@@ -65,6 +73,9 @@ VALORES = ["vlr_principal", "vlr_multa", "vlr_juro_encargo",
 
 # Deixe None para inferir o exercício pelas datas de pagamento.
 EXERCICIO = None
+
+# Intervalo (em segundos) da verificação de arquivos novos ou alterados.
+SEGUNDOS_VERIFICACAO = 5
 
 PASTA = os.path.dirname(os.path.abspath(__file__))
 ARQUIVOS = {t: [f"base{t}.xls", f"base{t}.xlsx"] for t in (1, 2, 3, 4)}
@@ -509,9 +520,11 @@ def abrir_detalhe(empresa, dados, periodo_texto, sufixo, ano_completo):
 # CARGA E TRATAMENTO
 # =========================================================================
 
-@st.cache_data(show_spinner=False)
-def ler_planilha(caminho, _mtime):
-    """_mtime entra na chave do cache: se o arquivo mudar, recarrega sozinho."""
+@st.cache_data(show_spinner=False, max_entries=20)
+def ler_planilha(caminho, mtime):
+    """mtime faz parte da chave do cache: arquivo salvo de novo = leitura nova.
+    (Não pode começar com '_' — o Streamlit ignora esses parâmetros no cache,
+    e era isso que deixava o painel preso numa versão antiga da base.)"""
     return pd.read_excel(caminho)
 
 
@@ -523,13 +536,41 @@ def caminho_de(nomes):
     return None
 
 
+def assinatura_bases():
+    """Retrato das bases presentes na pasta: (arquivo, data de modificação).
+    Muda quando um arquivo é salvo, incluído ou removido."""
+    nomes = [n for lista in ARQUIVOS.values() for n in lista] + ["base.xls", "base.xlsx"]
+    retrato = []
+    for nome in nomes:
+        p = os.path.join(PASTA, nome)
+        try:
+            retrato.append((nome, os.path.getmtime(p)))
+        except OSError:
+            continue
+    return tuple(retrato)
+
+
+def ler_com_aviso(caminho):
+    """Lê a planilha; se o Excel ainda estiver gravando o arquivo, tenta de novo
+    logo em seguida em vez de derrubar o painel."""
+    for tentativa in range(3):
+        try:
+            return ler_planilha(caminho, os.path.getmtime(caminho)).copy()
+        except Exception as erro:
+            if tentativa == 2:
+                st.error(f"Não consegui ler {os.path.basename(caminho)}: {erro}. "
+                         "Feche o arquivo no Excel e aguarde alguns segundos.")
+                st.stop()
+            time.sleep(1)
+
+
 def carregar():
     """Lê base1..base4. Cai para base.xls (trimestre pela data) se não achar nenhum."""
     partes, trimestres = [], []
     for tri, nomes in ARQUIVOS.items():
         caminho = caminho_de(nomes)
         if caminho:
-            parte = ler_planilha(caminho, os.path.getmtime(caminho)).copy()
+            parte = ler_com_aviso(caminho)
             parte["Trimestre"] = tri
             partes.append(parte)
             trimestres.append(tri)
@@ -542,7 +583,7 @@ def carregar():
         st.error("Nenhuma base encontrada. Coloque base1.xls (e os demais trimestres) "
                  "nesta mesma pasta.")
         st.stop()
-    return ler_planilha(legado, os.path.getmtime(legado)).copy(), [], False
+    return ler_com_aviso(legado), [], False
 
 
 def tratar(df, por_arquivo):
@@ -574,6 +615,38 @@ def tratar(df, por_arquivo):
     return df, sem_data
 
 
+# =========================================================================
+# ATUALIZAÇÃO AUTOMÁTICA
+# =========================================================================
+# Um fragmento roda sozinho a cada SEGUNDOS_VERIFICACAO segundos e compara as
+# datas de modificação com as da carga atual. Só recarrega a página quando
+# algo mudou — no resto do tempo é uma checagem de milissegundos.
+
+def _vigiar_bases(assinatura_carregada):
+    if assinatura_bases() != assinatura_carregada:
+        try:
+            st.rerun(scope="app")
+        except TypeError:          # Streamlit antigo: rerun sem escopo
+            st.rerun()
+    st.markdown(
+        f'<div class="legenda">Bases conferidas às '
+        f'{datetime.now():%H:%M:%S} · atualização automática a cada '
+        f'{SEGUNDOS_VERIFICACAO}s</div>', unsafe_allow_html=True)
+
+
+_fragmento = getattr(st, "fragment", None) or getattr(st, "experimental_fragment", None)
+if _fragmento:
+    vigiar_bases = _fragmento(run_every=SEGUNDOS_VERIFICACAO)(_vigiar_bases)
+else:
+    def vigiar_bases(_assinatura):
+        st.markdown('<div class="legenda">Atualize a página (F5) depois de salvar '
+                    'uma base — esta versão do Streamlit não recarrega sozinha.</div>',
+                    unsafe_allow_html=True)
+
+
+# A assinatura é tirada ANTES da leitura: se um arquivo for salvo no meio da
+# carga, a próxima conferência percebe e recarrega de novo.
+ASSINATURA_CARREGADA = assinatura_bases()
 bruto, tris_carregados, POR_ARQUIVO = carregar()
 df, sem_data = tratar(bruto, POR_ARQUIVO)
 
@@ -676,6 +749,8 @@ with st.sidebar:
                        f"dos consolidados.")
     if alertas:
         st.markdown(f'<div class="aviso">{" ".join(alertas)}</div>', unsafe_allow_html=True)
+
+    vigiar_bases(ASSINATURA_CARREGADA)
 
 
 # =========================================================================
